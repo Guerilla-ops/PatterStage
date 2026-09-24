@@ -13,7 +13,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 const mockUpsertCredential = jest.fn();
-jest.mock("@/lib/credentials-repository", () => ({
+jest.mock("@/lib/models/credentials-repository", () => ({
   upsertCredential: (...a: unknown[]) => mockUpsertCredential(...a),
   listCredentials: () => [],
 }));
@@ -27,15 +27,15 @@ jest.mock("@/modules/hermes/lib/config-import", () => ({
   parseHermesConfig: () => mockParsed,
 }));
 
-jest.mock("@/lib/models-repository", () => ({
+jest.mock("@/lib/models/models-repository", () => ({
   upsertModel: jest.fn(() => ({ id: "m1", action: "inserted" })),
   listModels: jest.fn(() => []),
   updateModel: jest.fn(() => ({ id: "m1" })),
   setModelCredential: jest.fn(),
 }));
-jest.mock("@/lib/api-auth", () => ({ requireAuth: () => null, requireNotReadOnly: () => null }));
-jest.mock("@/lib/audit-log", () => ({ appendAuditLine: jest.fn() }));
-jest.mock("@/lib/db", () => ({ ensureDb: jest.fn(), getDb: jest.fn() }));
+jest.mock("@/lib/api/audit-log", () => ({ appendAuditLine: jest.fn() }));
+// eslint-disable-next-line @typescript-eslint/no-require-imports -- jest.mock factories are hoisted above imports
+jest.mock("@/lib/db", () => require("../helpers/mocks").dbMock());
 
 import { NextRequest } from "next/server";
 

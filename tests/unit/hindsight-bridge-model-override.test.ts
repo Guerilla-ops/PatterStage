@@ -1,5 +1,5 @@
-/* eslint-disable @typescript-eslint/no-require-imports */
 /** @jest-environment node */
+/* eslint-disable @typescript-eslint/no-require-imports */
 
 /**
  * PR 7 — Hindsight bridge model override
@@ -59,7 +59,7 @@ jest.mock("next/server", () => ({
   },
 }));
 
-jest.mock("@/lib/api-logger", () => ({
+jest.mock("@/lib/api/api-logger", () => ({
   logApiError: jest.fn(),
 }));
 

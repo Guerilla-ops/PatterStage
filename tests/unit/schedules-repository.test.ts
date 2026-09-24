@@ -1,27 +1,16 @@
-/* eslint-disable @typescript-eslint/no-require-imports */
 /**
  * @jest-environment node
  *
  * Tests for the PatterStage-owned scheduler state repository
- * (src/lib/schedules-repository.ts), driven against a real in-memory
+ * (src/lib/schedule/schedules-repository.ts), driven against a real in-memory
  * SQLite DB seeded with the baseline schema. `@/lib/db` is mocked so the
  * repo's `getDb()` calls hit the test DB; `inTransaction` is stubbed to run
  * the callback directly (the real one closes over the real singleton).
  */
+/* eslint-disable @typescript-eslint/no-require-imports */
 import type Database from "better-sqlite3";
-import { readFileSync } from "fs";
-import { join } from "path";
-
-import type * as SchedulesRepo from "@/lib/schedules-repository";
-
-const baselineSql = readFileSync(
-  join(__dirname, "..", "..", "src", "lib", "db", "migrations", "001_baseline.sql"),
-  "utf-8",
-);
-
-function loadRealBetterSqlite3(): typeof import("better-sqlite3") {
-  return require("better-sqlite3/lib/index.js") as typeof import("better-sqlite3");
-}
+import type * as SchedulesRepo from "@/lib/schedule/schedules-repository";
+import { openBaselineDb } from "../helpers/baseline-db";
 
 interface TestDatabase {
   db: Database.Database;
@@ -29,10 +18,10 @@ interface TestDatabase {
 }
 
 function makeTestDatabase(): TestDatabase {
-  const RealDatabase = loadRealBetterSqlite3();
-  const db = new (RealDatabase as unknown as new (path: string) => Database.Database)(":memory:");
-  db.pragma("foreign_keys = ON");
-  db.exec(baselineSql);
+  // The shared helper rather than the raw baseline: createSchedule writes
+  // schedules.kind and schedules.script_name, which 041 adds, so a baseline-only
+  // fixture would hand the repository a schema no install has (T-0107).
+  const db = openBaselineDb();
   return { db, close: () => db.close() };
 }
 
@@ -58,7 +47,7 @@ describe("schedules-repository", () => {
         inTransaction: (fn: () => unknown) => fn(),
       };
     });
-    repo = require("@/lib/schedules-repository") as typeof SchedulesRepo;
+    repo = require("@/lib/schedule/schedules-repository") as typeof SchedulesRepo;
   });
 
   afterEach(() => {

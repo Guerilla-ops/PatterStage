@@ -8,7 +8,7 @@
 
 "use client";
 
-import GlowSurface from "@/components/ui/GlowSurface";
+import Card from "@/components/ui/Card";
 import ModelSelectDropdown from "@/components/models/ModelSelectDropdown";
 
 import { TASK_TYPES, type TaskType } from "@/lib/models/task-types";
@@ -99,31 +99,35 @@ export default function DefaultsGrid({
         const modelForSlot = selected ? models.find((m) => m.id === selected) : null;
 
         return (
-          <GlowSurface
-            key={slot}
-            data-task-slot={slot}
-            accent={slot === "agent" ? "orange" : modelForSlot ? "purple" : undefined}
-            className="rounded-xl border border-white/10 bg-dark-900/50 p-4 space-y-2 min-h-[120px] relative overflow-hidden"
+          // The slot's name is on a wrapper, not the card: Card carries an id
+          // and a test id and nothing else, and `data-task-slot` is what the
+          // page suite and the e2e specs find a slot by.
+          <div key={slot} data-task-slot={slot}>
+          <Card
+            glow={slot === "agent" ? "orange" : modelForSlot ? "purple" : undefined}
+            className="relative h-full min-h-[120px] space-y-2 overflow-hidden"
           >
             {/* Left accent bar — matches the glow accent */}
             {slot === "agent" && (
-              <div className="absolute left-0 top-0 bottom-0 w-0.5 rounded-l-xl bg-neon-orange" />
+              <div className="absolute left-0 top-0 bottom-0 w-0.5 rounded-l-ps-lg bg-neon-orange" />
             )}
             {slot !== "agent" && modelForSlot && (
-              <div className="absolute left-0 top-0 bottom-0 w-0.5 rounded-l-xl bg-neon-purple" />
+              <div className="absolute left-0 top-0 bottom-0 w-0.5 rounded-l-ps-lg bg-neon-purple" />
             )}
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0 flex-1">
                 {/* Per-slot "set all aux" shortcut removed — the section-level
                     Bulk auxiliary updater is the single control for that. */}
-                <div className="text-sm font-semibold text-white flex items-center gap-2">
+                <div className="text-body font-semibold text-ps-text-primary flex items-center gap-2">
                   {meta.label}
                 </div>
-                <p className="text-xs text-ps-text-muted font-mono mt-0.5 truncate">
+                {/* Two lines, not `truncate`: eight of these lost 97-256px of
+                    their own sentence to the ellipsis (T-0125). */}
+                <p className="text-micro text-ps-text-muted font-mono mt-0.5 line-clamp-2">
                   {meta.description}
                 </p>
               </div>
-              <span className="text-xs font-mono text-ps-text-muted bg-white/5 px-1.5 py-0.5 rounded uppercase tracking-widest flex-shrink-0">
+              <span className="text-micro font-mono text-ps-text-muted bg-ps-surface-raised px-1.5 py-0.5 rounded-ps-sm uppercase tracking-widest flex-shrink-0">
                 {slot}
               </span>
             </div>
@@ -141,7 +145,8 @@ export default function DefaultsGrid({
                 }}
               />
             </div>
-          </GlowSurface>
+          </Card>
+          </div>
         );
       })}
     </div>

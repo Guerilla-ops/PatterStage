@@ -18,7 +18,7 @@
 //
 // AND THE STATUS SPLIT. `POST /api/agent/profiles/sync/push` answered 200
 // {success:false} for the same failure the toolsets route answered 500 for. It
-// also put the reason at `data.result.error`, while runSyncAction looks at
+// also put the reason at `data.result.error`, while runWrite looks at
 // `data.error` — so the operator saw a bare "Push failed" and never the ENOENT
 // underneath it. Single-target pushes now answer 500 carrying the reason. Batch
 // pushes stay 200, because partial success across many profiles is a real
@@ -41,10 +41,11 @@ jest.mock("@/modules/hermes/lib/profile-push", () => ({
   pushSkillToHermes: (k: string) => mockPushSkill(k),
 }));
 
-jest.mock("@/lib/db", () => ({ ensureDb: jest.fn() }));
-jest.mock("@/lib/api-logger", () => ({
+// eslint-disable-next-line @typescript-eslint/no-require-imports -- jest.mock factories are hoisted above imports
+jest.mock("@/lib/db", () => require("../helpers/mocks").dbMock());
+jest.mock("@/lib/api/api-logger", () => ({
   logApiError: jest.fn(),
-  serverErrorFromCatch: jest.requireActual("@/lib/api-logger").serverErrorFromCatch,
+  serverErrorFromCatch: jest.requireActual("@/lib/api/api-logger").serverErrorFromCatch,
 }));
 
 import { toPatchResponse } from "@/modules/hermes/handlers/profile-patch";
@@ -138,7 +139,7 @@ describe("sync/push answers with the outcome it had", () => {
   });
 
   it("puts the reason where the client actually reads it", async () => {
-    // runSyncAction reads `data.error` on the 200 path and the thrown ApiError's
+    // runWrite reads `data.error` on the 200 path and the thrown ApiError's
     // message on the non-2xx path — both of which come from the top-level
     // `error` field. The route used to bury the reason at `data.result.error`,
     // so every push failure surfaced as a bare "Push failed".

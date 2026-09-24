@@ -4,13 +4,15 @@ import { basename } from "path";
 
 import { getAgentWorkspace } from "@/lib/runtime/workspace";
 import { readAgentSessionDetail } from "@/lib/runtime/state-db";
-import { logApiError, serverErrorFromCatch } from "@/lib/api-logger";
+import { getMaxSessionMessages } from "@/lib/sessions/sessions-api-guard";
+import { logApiError, serverErrorFromCatch } from "@/lib/api/api-logger";
 
-import { badRequest, notFound, ok, payloadTooLarge } from "@/lib/api-response";
+import { badRequest, notFound, ok, payloadTooLarge } from "@/lib/api/api-response";
 import { safeStat } from "@/lib/fs/fs-stats";
 import { getSession, estimateSessionSize } from "@/lib/sessions/session-repository";
+import type { SessionStatus } from "@/lib/sessions/session-repository";
 import { lookupMissionIdForCronSession } from "@/lib/sessions/session-mission-links";
-import { PATHS } from "@/lib/paths";
+import { PATHS } from "@/lib/host/paths";
 import {
   getMaxSessionFileBytes,
   sessionsRateLimitResponse,
@@ -47,7 +49,9 @@ export async function GET(
   // agent's own database, not PatterStage's. A null detail means either
   // no state.db or no such session, and both fall through to Step 2.
   try {
-    const detail = readAgentSessionDetail(sanitizedId);
+    // Capped: a transcript with tens of thousands of messages used to be
+    // fetched whole and rendered whole (T-0105, D40).
+    const detail = readAgentSessionDetail(sanitizedId, getMaxSessionMessages());
 
     if (detail) {
       const sessionRow = detail.session;
@@ -135,6 +139,19 @@ export async function GET(
           // cron job id against the missions table. Lets the detail page
           // render a "Open Mission" link for cron-spawned sessions.
           missionId: lookupMissionIdForCronSession(sanitizedId),
+          // How it ended: the PatterStage row when there is one, otherwise
+          // derived from whether the agent has closed it (T-0105, D30).
+          ...(() => {
+            const row = getSession(sanitizedId);
+            return row
+              ? { status: row.status, exitCode: row.exitCode, error: row.error }
+              : {
+                  status: (sessionRow.ended_at === null ? "active" : "completed") as SessionStatus,
+                  exitCode: null,
+                  error: null,
+                };
+          })(),
+          truncated: detail.truncated,
           ...(inFlightNote ? { note: inFlightNote } : {}),
         }),
       );
@@ -153,7 +170,11 @@ export async function GET(
   if (!filePath) {
     // No file on disk — try the DB record for mission-born sessions
     const dbSession = getSession(sanitizedId);
-    if (dbSession && (dbSession.source === "mission" || dbSession.source === "cron")) {
+    // Any PatterStage row, not only the mission and cron ones. A CLI session
+    // that failed and left no transcript answered 404, so the one screen an
+    // operator opens to find out what went wrong told them the session did not
+    // exist (T-0105, D30). The row IS the answer when nothing else is.
+    if (dbSession) {
       // Check for a mission output file (try newer `.session` first,
       // then legacy `.output.log`). findFileWithExtension collapses
       // the 2x `existsSync` ladder into one call.
@@ -197,7 +218,9 @@ export async function GET(
             ? "This mission-spawned session has no output file yet. The agent may still be running, or the output was written to ~/.hermes/state.db — refresh to check."
             : dbSession.source === "cron"
               ? "This cron-spawned session is still running. Messages will appear here when the agent completes."
-              : "The agent ran but produced no output file.",
+              : dbSession.status === "failed"
+                ? "No transcript was written for this session. What is known about how it ended is above."
+                : "The agent ran but produced no output file.",
         }),
       );
     }

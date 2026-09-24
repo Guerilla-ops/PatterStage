@@ -38,7 +38,7 @@
 // column would publish a process-local judgement as durable operator-facing
 // truth, and nothing renders it.
 
-jest.mock("@/lib/runs-repository", () => ({
+jest.mock("@/lib/runs/runs-repository", () => ({
   listActiveRuns: jest.fn(),
   updateRun: jest.fn(),
   getRun: jest.fn(),
@@ -50,7 +50,8 @@ jest.mock("@/lib/missions/mission-repository", () => ({
 jest.mock("@/lib/sessions/session-repository", () => ({
   closeSessionForMission: jest.fn(),
 }));
-jest.mock("@/lib/db", () => ({ now: jest.fn(() => new Date().toISOString()) }));
+// eslint-disable-next-line @typescript-eslint/no-require-imports -- jest.mock factories are hoisted above imports
+jest.mock("@/lib/db", () => require("../helpers/mocks").dbMock({ now: jest.fn(() => new Date().toISOString()) }));
 jest.mock("@/lib/runtime", () => ({
   runtime: { getRun: jest.fn(), stopRun: jest.fn(() => Promise.resolve()) },
 }));
@@ -65,7 +66,7 @@ import {
   resetNotFoundTracker,
   RUN_NOT_FOUND_GRACE_MS,
 } from "@/lib/orchestration/run-reconcile";
-import { listActiveRuns, updateRun, getRun as getLocalRun } from "@/lib/runs-repository";
+import { listActiveRuns, updateRun, getRun as getLocalRun } from "@/lib/runs/runs-repository";
 import { getMission } from "@/lib/missions/mission-repository";
 import { runtime } from "@/lib/runtime";
 import { RuntimeRequestError } from "@/lib/runtime/types";

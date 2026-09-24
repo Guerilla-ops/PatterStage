@@ -3,7 +3,7 @@
 // ═══════════════════════════════════════════════════════════════
 //
 // Field-by-field whitelist, not a spread: an unknown key in the body must
-// never reach disk (docs/REPO_GUIDE.md, "no mass assignment").
+// never reach disk (docs/contributing/repo-guide.md, "no mass assignment").
 
 import { NextResponse } from "next/server";
 
@@ -17,8 +17,9 @@ import {
   sanitizeTemplateId,
   saveTemplate,
 } from "./shared";
-import { isDispatchMode, DISPATCH_MODES } from "@/lib/dispatch-mode";
-import { badRequest } from "@/lib/api-response";
+import { isDispatchMode, DISPATCH_MODES } from "@/lib/ui/dispatch-mode";
+import { badRequest } from "@/lib/api/api-response";
+import { recordEvent } from "@/lib/analytics/record-event";
 
 export function handleUpdateTemplate(body: TemplateActionBody): NextResponse {
   const { templateId } = body;
@@ -99,6 +100,7 @@ export function handleUpdateTemplate(body: TemplateActionBody): NextResponse {
 
   saveTemplate(template);
   invalidateTemplatesCache();
+  recordEvent("template.saved", { entityType: "template", entityId: template.id, metadata: { action: "updated" } });
   return NextResponse.json({
     data: enrichCustomTemplateFromDisk(template as unknown as Record<string, unknown>),
   });

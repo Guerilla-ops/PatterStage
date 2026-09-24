@@ -17,7 +17,7 @@ jest.mock("fs", () => ({
 let mockCrontab = "";
 const mockWritten: string[] = [];
 const mockSetEnabled: Array<[string, boolean]> = [];
-jest.mock("@/lib/host-scheduler", () => ({
+jest.mock("@/lib/host/host-scheduler", () => ({
   getHostScheduler: () => ({
     readRaw: async () => mockCrontab,
     writeRaw: async (c: string) => {
@@ -30,7 +30,7 @@ jest.mock("@/lib/host-scheduler", () => ({
   }),
 }));
 
-jest.mock("@/lib/paths", () => ({
+jest.mock("@/lib/host/paths", () => ({
   PS_DATA_DIR: "/tmp/ch-data",
   getPsScriptsDir: () => "/tmp/ch-data/scripts",
   getPsHardwareLogDir: () => "/tmp/ch-data/logs",
@@ -46,12 +46,12 @@ jest.mock("@/lib/paths", () => ({
 // The route now REBUILDS the command from a resolved script path instead of
 // substring-checking the caller's text, so the test must say which script names
 // exist. `fs` is mocked above, so the real existsSync-backed resolver cannot run.
-jest.mock("@/lib/scripts-manager", () => ({
+jest.mock("@/lib/scripts/scripts-manager", () => ({
   resolveScriptPath: (name: string) =>
     ["ps-backup.mjs", "ps-health-check.mjs"].includes(name) ? `/tmp/ch-data/scripts/${name}` : null,
 }));
 
-jest.mock("@/lib/api-logger", () => ({ logApiError: jest.fn() }));
+jest.mock("@/lib/api/api-logger", () => ({ logApiError: jest.fn() }));
 
 import { mockRequest } from "../helpers/api-test-helpers";
 
@@ -62,17 +62,6 @@ beforeEach(() => {
   mockSetEnabled.length = 0;
   mockReadFileSync.mockImplementation(() => {
     throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
-  });
-});
-
-describe("GET /api/cron/hardware/meta", () => {
-  it("returns scriptsDir and logDir from paths", async () => {
-    const { GET } = await import("@/app/api/cron/hardware/meta/route");
-    const res = await GET(mockRequest("http://127.0.0.1/api/test"));
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { data?: { scriptsDir: string; logDir: string } };
-    expect(body.data?.scriptsDir).toBe("/tmp/ch-data/scripts");
-    expect(body.data?.logDir).toBe("/tmp/ch-data/logs");
   });
 });
 

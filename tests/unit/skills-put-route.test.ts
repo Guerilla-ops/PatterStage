@@ -15,28 +15,25 @@ jest.mock("@/modules/hermes/lib/agent-runtime", () => ({
   getActiveHermesHome: jest.fn(() => "/tmp/test-hermes"),
 }));
 
-jest.mock("@/lib/api-logger", () => ({
+jest.mock("@/lib/api/api-logger", () => ({
   logApiError: jest.fn(),
 }));
 
-jest.mock("@/lib/audit-log", () => ({
+jest.mock("@/lib/api/audit-log", () => ({
   appendAuditLine: jest.fn(),
 }));
 
 const mockRequireAuth = jest.fn((..._a: unknown[]): NextResponse | null => null);
 
-jest.mock("@/lib/api-auth", () => ({
-  requireNotReadOnly: jest.fn(() => null),
+jest.mock("@/lib/api/api-auth", () => ({
   isReadOnly: jest.fn(() => false),
 }));
 
-const mockEnsureDb = jest.fn();
-jest.mock("@/lib/db", () => ({
-  ensureDb: () => mockEnsureDb(),
-}));
+// eslint-disable-next-line @typescript-eslint/no-require-imports -- jest.mock factories are hoisted above imports
+jest.mock("@/lib/db", () => require("../helpers/mocks").dbMock());
 
 const mockUpsertSkill = jest.fn();
-jest.mock("@/lib/skills-repository", () => ({
+jest.mock("@/lib/skills/skills-repository", () => ({
   parseSkillFrontmatter: jest.fn(() => ({
     name: "demo",
     description: "Demo skill",

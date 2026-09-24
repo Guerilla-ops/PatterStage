@@ -9,7 +9,7 @@
  * left real (it's covered by next-run.test.ts).
  */
 
-import type { ScheduleRecord } from "@/lib/schedules-repository";
+import type { ScheduleRecord } from "@/lib/schedule/schedules-repository";
 
 const getDueSchedules = jest.fn();
 const advanceSchedule = jest.fn();
@@ -17,18 +17,18 @@ const createRun = jest.fn();
 const hasDispatchedMission = jest.fn();
 const dispatchMissionRun = jest.fn();
 
-jest.mock("@/lib/schedules-repository", () => ({
+jest.mock("@/lib/schedule/schedules-repository", () => ({
   getDueSchedules: (...a: unknown[]) => getDueSchedules(...a),
   advanceSchedule: (...a: unknown[]) => advanceSchedule(...a),
 }));
-jest.mock("@/lib/runs-repository", () => ({ createRun: (...a: unknown[]) => createRun(...a) }));
+jest.mock("@/lib/runs/runs-repository", () => ({ createRun: (...a: unknown[]) => createRun(...a) }));
 jest.mock("@/lib/missions/mission-repository", () => ({
   hasDispatchedMission: (...a: unknown[]) => hasDispatchedMission(...a),
 }));
 jest.mock("@/lib/orchestration/dispatch", () => ({
   dispatchMissionRun: (...a: unknown[]) => dispatchMissionRun(...a),
 }));
-jest.mock("@/lib/api-logger", () => ({ logApiError: jest.fn() }));
+jest.mock("@/lib/api/api-logger", () => ({ logApiError: jest.fn() }));
 
 import { runSchedulerTick } from "@/lib/orchestration/scheduler/tick";
 
@@ -37,6 +37,10 @@ const NOW = new Date("2026-06-15T10:00:00.000Z");
 function makeSchedule(over: Partial<ScheduleRecord> = {}): ScheduleRecord {
   return {
     id: "sch1",
+    // Required since 041 (T-0107): every row says what it fires. These cases
+    // are all about missions, which is what every row was before it.
+    kind: "mission",
+    scriptName: null,
     missionId: "m1",
     name: "S",
     schedule: "every 30m",

@@ -1,9 +1,8 @@
 // ═══════════════════════════════════════════════════════════════
 // MissionGroupCard — sessions sharing a missionId, collapsed into one row
 //
-// Extracted verbatim from app/(main)/sessions/page.tsx. The expanded
-// flag is local card state; the grouping itself is computed upstream by
-// buildGroupedEntries in src/lib/sessions/sessions-grouping.ts.
+// The expanded flag is local card state; the grouping itself is computed
+// upstream by buildGroupedEntries in src/lib/sessions/sessions-grouping.ts.
 //
 // T-0033 turned the green rounded box into a ledger row inside the page's
 // one Panel, per WG-WEB-003 (D). A group row is still a group: it keeps
@@ -35,26 +34,30 @@ export default function MissionGroupCard({ group }: { group: MissionGroup }) {
 
   return (
     <div className="bg-neon-green/5">
+      {/* The Mission link used to live INSIDE this button: an anchor inside a
+          button, which is invalid and which assistive technology resolves
+          however it likes (T-0105, D32). They are siblings now. */}
+      <div className="flex items-center gap-2">
       <LedgerRowButton
         padding="block"
         onClick={() => setExpanded(!expanded)}
-        className="w-full text-left flex items-center justify-between gap-3"
+        className="flex-1 min-w-0 text-left flex items-center justify-between gap-3"
       >
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">
             {hasActive && <LiveDot />}
             <Layers className="w-4 h-4 text-neon-green flex-shrink-0" />
-            <h3 className="font-semibold text-white truncate">{title}</h3>
-            <span className="text-xs font-mono px-1.5 py-0.5 rounded bg-neon-green/10 text-neon-green">
-              {group.sessions.length} sessions
+            <h3 className="font-semibold text-ps-text-primary truncate">{title}</h3>
+            <span className="text-micro font-mono px-1.5 py-0.5 rounded-ps-sm bg-neon-green/10 text-neon-green">
+              {group.sessions.length} on this page
             </span>
             {hasActive && (
-              <span className="text-xs font-mono px-1.5 py-0.5 rounded bg-neon-green/20 text-neon-green">
+              <span className="text-micro font-mono px-1.5 py-0.5 rounded-ps-sm bg-neon-green/20 text-neon-green">
                 {group.activeCount} active
               </span>
             )}
           </div>
-          <div className="flex items-center gap-3 text-xs text-ps-text-muted font-mono flex-wrap">
+          <div className="flex items-center gap-3 text-micro text-ps-text-muted font-mono flex-wrap">
             <span className="flex items-center gap-1">
               <Clock className="w-3 h-3" />
               {timeAgo(group.firstStartedAt)} → {timeAgo(group.lastStartedAt)}
@@ -63,14 +66,6 @@ export default function MissionGroupCard({ group }: { group: MissionGroup }) {
           </div>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
-          <Link
-            href={`${MISSIONS_PATH}?mission=${group.missionId}`}
-            onClick={(e) => e.stopPropagation()}
-            className="text-xs font-mono px-2 py-1 rounded bg-neon-green/10 text-neon-green hover:bg-neon-green/20 transition-colors"
-            title="Open the parent mission"
-          >
-            ↗ Mission
-          </Link>
           {expanded ? (
             <ChevronDown className="w-4 h-4 text-ps-text-muted" />
           ) : (
@@ -78,14 +73,22 @@ export default function MissionGroupCard({ group }: { group: MissionGroup }) {
           )}
         </div>
       </LedgerRowButton>
+      <Link
+        href={`${MISSIONS_PATH}?mission=${group.missionId}`}
+        className="mr-4 text-micro font-mono px-2 py-1 rounded-ps-sm bg-neon-green/10 text-neon-green hover:bg-neon-green/20 transition-colors shrink-0"
+        title="Open the parent mission"
+      >
+        ↗ Mission
+      </Link>
+      </div>
       {expanded && (
-        <div className="border-t border-white/5 bg-dark-900/30 divide-y divide-white/5">
+        <div className="border-t border-ps-edge-hairline bg-ps-surface-panel divide-y divide-ps-edge-hairline">
           {group.sessions.map((s) => (
             <SessionCard key={s.id} session={s} />
           ))}
           {oldest && oldest.id !== latest.id && (
-            <p className="text-xs font-mono text-ps-text-faint px-4 py-2">
-              Showing all {group.sessions.length} sessions · oldest: {timeAgo(oldest.startedAt)}
+            <p className="text-micro font-mono text-ps-text-faint px-4 py-2">
+              {group.sessions.length} on this page · oldest: {timeAgo(oldest.startedAt)}
             </p>
           )}
         </div>

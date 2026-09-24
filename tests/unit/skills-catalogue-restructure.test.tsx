@@ -1,4 +1,5 @@
 /** @jest-environment jsdom */
+/* eslint-disable @typescript-eslint/no-require-imports */
 
 /**
  * ACCEPTANCE ORACLE for T-0032, the Skills Manager restructure (tier R2).
@@ -28,7 +29,8 @@
  * page window.
  */
 
-import { render, screen, fireEvent, waitFor, within, act } from "@testing-library/react";
+import { screen, fireEvent, waitFor, within, act } from "@testing-library/react";
+import { renderWithQuery } from "../helpers/render-with-query";
 
 // ── Icon mocks: lucide-react is a peer of every component here ──────────────
 jest.mock("lucide-react", () => {
@@ -36,10 +38,7 @@ jest.mock("lucide-react", () => {
   return new Proxy({}, { get: (_t, prop: string) => passthrough(prop) });
 });
 
-jest.mock("@/components/layout/AppPageShell", () => ({
-  __esModule: true,
-  default: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-}));
+jest.mock("@/components/layout/AppPageShell", () => require("../helpers/mocks").appPageShellMock());
 
 jest.mock("@/components/layout/PageHeader", () => ({
   __esModule: true,
@@ -48,31 +47,31 @@ jest.mock("@/components/layout/PageHeader", () => ({
   ),
 }));
 
-jest.mock("@/components/ui/ProfileSelector", () => ({
+// The one picker for the Agent group (U11); the value is not under test here.
+jest.mock("@/components/ui/ProfilePicker", () => ({
   __esModule: true,
-  default: () => <div data-testid="profile-selector" />,
+  default: () => <div data-testid="profile-picker" />,
 }));
-
-// StatStrip pulls the whole viz layer in; the insight tiles are not under test.
-jest.mock("@/components/skills/SkillsInsights", () => ({
-  __esModule: true,
-  default: () => <div data-testid="skills-insights" />,
-}));
-
-jest.mock("@/lib/operation-sync-action", () => ({
-  __esModule: true,
-  runSyncAction: jest.fn(),
+jest.mock("@/hooks/useProfiles", () => ({
+  useProfiles: () => ({ refetch: async () => undefined, data: [{ id: "default", name: "Bob", description: "" }], isLoading: false, error: null }),
 }));
 
 const apiFetch = jest.fn();
-jest.mock("@/lib/api-fetch", () => ({
+jest.mock("@/lib/api/api-fetch", () => ({
   __esModule: true,
   apiFetch: (...args: unknown[]) => apiFetch(...args),
+  // The page reads through useApiResource, which calls safeApiCall; routed
+  // through the same mock so a read is still one of the calls asked for (C6, T-0143).
+   
+  safeApiCall: require("../helpers/mocks").safeApiCallOver((...a: unknown[]) => apiFetch(...a)),
   toastError: jest.fn(),
+  // Amended 2026-09-10 (C3, T-0138): the toggle writes through runWrite, which says a
+  // failure through messageFromError.
+  messageFromError: (e: unknown, f: string) => (e instanceof Error ? e.message : f),
 }));
 
-import SkillsPage from "@/app/operations/skills/page";
-import { pageSlice } from "@/lib/skills-page-helpers";
+import SkillsPage from "@/app/agent/skills/page";
+import { pageSlice } from "@/lib/skills/skills-page-helpers";
 import type { Skill } from "@/types/console";
 
 /**
@@ -173,14 +172,16 @@ beforeEach(() => {
 });
 
 async function renderPage() {
-  const view = render(<SkillsPage />);
+  const view = renderWithQuery(<SkillsPage />);
   await waitFor(() =>
     expect(screen.getAllByTestId("skill-category-row").length).toBeGreaterThan(0),
   );
   return view;
 }
 
-const cards = () => screen.queryAllByTestId("skill-card");
+// A skill is a ROW since U11 (T-0125); the helper keeps its name so every
+// assertion below reads as written.
+const cards = () => screen.queryAllByTestId("skill-row");
 const cardNames = () =>
   cards().map((c) => c.getAttribute("data-skill") ?? "");
 
@@ -200,11 +201,18 @@ function search(term: string) {
 
 // ── INV-2 · collapsed by default ───────────────────────────────────────────
 
+// Amended 2026-09-10 (U11, T-0125). INV-2 asked for no skill row at all on
+// open, which on the running product meant a screen that answered "how many"
+// and refused "which". The rule is now sized: a section small enough to render
+// in full (four page windows) opens with its skills on screen, and one beyond
+// that collapses as before. In this fixture the 118 active skills collapse and
+// the 60 inactive ones open to their first page, which is what the counts
+// below now say.
 describe("INV-2 the page opens as a list of categories, not a wall", () => {
-  it("renders every category with its count and not one skill row", async () => {
+  it("renders every category with its count; the large section has no rows, the small one its first page", async () => {
     await renderPage();
 
-    expect(cards()).toHaveLength(0);
+    expect(cards()).toHaveLength(PAGE);
 
     const rows = screen.getAllByTestId("skill-category-row");
     // 11 active categories + the one wide inactive category.
@@ -231,20 +239,20 @@ describe("INV-3 an expanded category renders at most one page", () => {
   it("shows one page window of a 60-skill category, not 60 rows", async () => {
     await renderPage();
 
-    fireEvent.click(categoryRow("Wide"));
-
+    // Wide is open by default (U11): 60 skills is inside the size that opens.
     expect(cards()).toHaveLength(PAGE);
     expect(screen.getByTestId("skill-page-status").textContent).toContain("60");
   });
 
   it("collapsing the category takes the rows back out of the DOM", async () => {
     await renderPage();
-
-    fireEvent.click(categoryRow("Wide"));
     expect(cards()).toHaveLength(PAGE);
 
     fireEvent.click(categoryRow("Wide"));
     expect(cards()).toHaveLength(0);
+
+    fireEvent.click(categoryRow("Wide"));
+    expect(cards()).toHaveLength(PAGE);
   });
 });
 
@@ -253,7 +261,6 @@ describe("INV-3 an expanded category renders at most one page", () => {
 describe("INV-5 paging visits every skill in a category exactly once", () => {
   it("walks all 60 wide skills across its pages", async () => {
     await renderPage();
-    fireEvent.click(categoryRow("Wide"));
 
     const seen: string[] = [];
     for (;;) {
@@ -326,7 +333,8 @@ describe("INV-1 search runs over the whole catalogue", () => {
     expect(cards().length).toBeGreaterThan(0);
 
     search("");
-    expect(cards()).toHaveLength(0);
+    // Back to the category list: the open Wide category's first page, nothing else.
+    expect(cards()).toHaveLength(PAGE);
     expect(screen.getAllByTestId("skill-category-row")).toHaveLength(12);
   });
 });
@@ -402,7 +410,6 @@ describe("INV-4 every existing action survives the restructure", () => {
 
   it("toggling from inside an expanded category works the same way", async () => {
     await renderPage();
-    fireEvent.click(categoryRow("Wide"));
 
     const first = cardNames()[0];
     await act(async () => {

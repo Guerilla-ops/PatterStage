@@ -3,22 +3,12 @@
 // CRUD + idempotent capture for the artifacts registry (real SQLite; the
 // @/lib/db singleton is mocked to a fresh in-memory DB per test).
 
-import { join } from "path";
-import { execBaselineSchema } from "../helpers/baseline-db";
-import { applyArtifactsMigration } from "@/lib/db/apply-artifacts-migration";
+import { openBaselineDb } from "../helpers/baseline-db";
+import { applyArtifactsMigration } from "@/lib/db/sql-migrations";
 
 let testDb: import("better-sqlite3").Database | null = null;
 
-jest.mock("@/lib/db", () => {
-  const actualCrypto = jest.requireActual("crypto") as typeof import("crypto");
-  return {
-    getDb: () => testDb!,
-    inTransaction: <T,>(fn: () => T) => testDb!.transaction(fn)(),
-    uuid: () => actualCrypto.randomUUID(),
-    now: () => new Date().toISOString(),
-    ensureDb: () => undefined,
-  };
-});
+jest.mock("@/lib/db", () => require("../helpers/baseline-db").dbSingletonMock(() => testDb));
 
 import {
   captureArtifactOnce,
@@ -27,16 +17,10 @@ import {
   getArtifact,
   hasArtifactForSource,
   listArtifacts,
-} from "@/lib/artifacts-repository";
-
-const migrationsDir = join(process.cwd(), "src", "lib", "db", "migrations");
+} from "@/lib/runs/artifacts-repository";
 
 beforeEach(() => {
-  const Database = require("better-sqlite3/lib/index.js") as typeof import("better-sqlite3");
-  testDb = new (Database as unknown as new (path: string) => import("better-sqlite3").Database)(":memory:");
-  testDb.pragma("foreign_keys = ON");
-  execBaselineSchema(testDb);
-  applyArtifactsMigration(testDb, migrationsDir);
+  testDb = openBaselineDb([applyArtifactsMigration]);
 });
 afterEach(() => {
   testDb?.close();

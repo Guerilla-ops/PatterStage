@@ -1,5 +1,5 @@
-/* eslint-disable @typescript-eslint/no-require-imports */
 /** @jest-environment node */
+/* eslint-disable @typescript-eslint/no-require-imports */
 
 /**
  * Tests for the `parseCategoryIdOrError` helper in
@@ -17,37 +17,9 @@
  *   - non-string → 400 NextResponse "categoryId must be a string"
  */
 
-jest.mock("next/server", () => {
-  // NextResponse as a real class so the `instanceof NextResponse` narrowing
-  // in `parseCategoryIdOrError`'s callers works. See session-37 findings.
-  const responses: Array<{ data: unknown; init?: ResponseInit }> = [];
-  class NextResponse {
-    ok: boolean;
-    status: number;
-    private _data: unknown;
-    constructor(data: unknown = null, init?: ResponseInit) {
-      this._data = data;
-      this.status = init?.status ?? 200;
-      this.ok = this.status >= 200 && this.status < 300;
-    }
-    json() { return Promise.resolve(this._data); }
-    static json(data: unknown, init?: ResponseInit) {
-      responses.push({ data, init });
-      return new NextResponse(data, init);
-    }
-  }
-  return {
-    NextRequest: class NextRequest {
-      url = "http://localhost/api/missions";
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      headers = new Map() as any;
-    },
-    NextResponse,
-    __responses: responses,
-  };
-});
+jest.mock("next/server", () => require("../helpers/mocks").nextServerMock());
 
-jest.mock("@/lib/api-logger", () => ({
+jest.mock("@/lib/api/api-logger", () => ({
   logApiError: jest.fn(),
   serverErrorFromCatch: jest.fn(
     (_route: string, _ctx: string, _err: unknown, msg: string) => ({
@@ -56,13 +28,10 @@ jest.mock("@/lib/api-logger", () => ({
     }),
   ),
 }));
-jest.mock("@/lib/api-auth", () => ({
-  // requireNotReadOnly is the honest name of what these routes call now;
-  // requireAuth stays mocked for the modules that have not been renamed yet.
-  requireNotReadOnly: jest.fn(() => null),
+jest.mock("@/lib/api/api-auth", () => ({
   isReadOnly: jest.fn(() => false),
 }));
-jest.mock("@/lib/audit-log", () => ({ appendAuditLine: jest.fn() }));
+jest.mock("@/lib/api/audit-log", () => ({ appendAuditLine: jest.fn() }));
 jest.mock("@/lib/missions/mission-repository", () => ({
   listMissions: jest.fn(() => []),
   getMission: jest.fn(() => undefined),

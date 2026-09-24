@@ -1,26 +1,28 @@
 // ═══════════════════════════════════════════════════════════════
 // SessionFilterBar — search, source filter and the view-options row
 //
-// Extracted verbatim from app/(main)/sessions/page.tsx. Every piece of
-// state stays on the page; this component only renders the controls and
-// calls back. Presentation only.
+// Every piece of state stays on the page; this component only renders the
+// controls and calls back. Presentation only.
 // ═══════════════════════════════════════════════════════════════
 
 "use client";
 
-import { Activity, EyeOff, Filter, Layers } from "lucide-react";
+import { Activity, AlertTriangle, EyeOff, Filter, Layers } from "lucide-react";
 import { SearchInput } from "@/components/ui/Input";
 import { LiveDot } from "@/components/ui/LiveDot";
-import { SOURCE_META } from "@/components/session/constants";
-import type { SessionSource } from "@/lib/sessions/session-repository";
+import { sourceMeta } from "@/components/session/constants";
+import { SESSION_STATUS_LABELS } from "@/lib/ui/status-labels";
 
 export interface SessionFilterBarProps {
   search: string;
   onSearchChange: (value: string) => void;
-  sources: SessionSource[];
-  sourceFilter: SessionSource | null;
+  /** Every source the current filter can still reach, from the API. */
+  sources: string[];
+  sourceFilter: string | null;
   onClearSourceFilter: () => void;
-  onSelectSourceFilter: (src: SessionSource) => void;
+  onSelectSourceFilter: (src: string) => void;
+  failedOnly: boolean;
+  onToggleFailedOnly: () => void;
   groupByMission: boolean;
   onToggleGroupByMission: () => void;
   hideApiNoise: boolean;
@@ -34,6 +36,8 @@ export default function SessionFilterBar({
   sourceFilter,
   onClearSourceFilter,
   onSelectSourceFilter,
+  failedOnly,
+  onToggleFailedOnly,
   groupByMission,
   onToggleGroupByMission,
   hideApiNoise,
@@ -51,15 +55,21 @@ export default function SessionFilterBar({
           />
         </div>
         {sources.length > 0 && (
+          // Every chip carries a resting boundary. A filter with none does not
+          // read as a control at all - it reads as a word - and WCAG 1.4.11
+          // asks 3:1 of the boundary that identifies one. The edge is `ps-edge`
+          // in BOTH states, per the rule U6 settled: an accent stroke cannot
+          // reliably reach 3:1 on the panel, so what says "chosen" is the fill
+          // and the text, never the border (T-0124).
           <div className="flex items-center gap-2 flex-wrap">
             <Filter className="w-4 h-4 text-ps-text-muted flex-shrink-0" />
             <button
               onClick={onClearSourceFilter}
               aria-pressed={!sourceFilter}
-              className={`text-xs font-mono px-2 py-1 rounded transition-colors ${
+              className={`rounded-ps-sm border border-ps-edge px-2 py-1 font-mono text-micro transition-colors ${
                 !sourceFilter
                   ? "bg-neon-orange/20 text-neon-orange"
-                  : "text-ps-text-muted hover:text-ps-text-secondary"
+                  : "text-ps-text-muted hover:bg-ps-surface-raised hover:text-ps-text-secondary"
               }`}
             >
               All
@@ -69,27 +79,41 @@ export default function SessionFilterBar({
                 key={src}
                 onClick={() => onSelectSourceFilter(src)}
                 aria-pressed={sourceFilter === src}
-                className={`text-xs font-mono px-2 py-1 rounded transition-colors flex items-center gap-1 ${
+                className={`flex items-center gap-1 rounded-ps-sm border border-ps-edge px-2 py-1 font-mono text-micro transition-colors ${
                   sourceFilter === src
                     ? "bg-neon-orange/20 text-neon-orange"
-                    : "text-ps-text-muted hover:text-ps-text-secondary"
+                    : "text-ps-text-muted hover:bg-ps-surface-raised hover:text-ps-text-secondary"
                 }`}
               >
-                {SOURCE_META[src]?.icon}
-                {SOURCE_META[src]?.label ?? src}
+                {sourceMeta(src).icon}
+                {sourceMeta(src).label}
               </button>
             ))}
+            {/* The one question the list could not be asked (T-0105, D30). */}
+            <button
+              type="button"
+              onClick={onToggleFailedOnly}
+              aria-pressed={failedOnly}
+              className={`flex items-center gap-1 rounded-ps-sm border border-ps-edge px-2 py-1 font-mono text-micro transition-colors ${
+                failedOnly
+                  ? "bg-semantic-danger/20 text-semantic-danger"
+                  : "text-ps-text-muted hover:bg-ps-surface-raised hover:text-ps-text-secondary"
+              }`}
+            >
+              <AlertTriangle className="w-3 h-3" />
+              {SESSION_STATUS_LABELS.failed}
+            </button>
           </div>
         )}
       </div>
 
       {/* View options row: group-by-mission, hide-api-noise, live indicator hint */}
-      <div className="flex items-center gap-2 flex-wrap text-xs font-mono">
+      <div className="flex items-center gap-2 flex-wrap text-micro font-mono">
         <button
           type="button"
           onClick={onToggleGroupByMission}
           aria-pressed={groupByMission}
-          className={`flex items-center gap-1 px-2 py-1 rounded transition-colors ${
+          className={`flex items-center gap-1 px-2 py-1 rounded-ps-sm transition-colors ${
             groupByMission
               ? "bg-neon-green/10 text-neon-green"
               : "text-ps-text-muted hover:text-ps-text-secondary"
@@ -103,12 +127,12 @@ export default function SessionFilterBar({
           type="button"
           onClick={onToggleHideApiNoise}
           aria-pressed={hideApiNoise}
-          className={`flex items-center gap-1 px-2 py-1 rounded transition-colors ${
+          className={`flex items-center gap-1 px-2 py-1 rounded-ps-sm transition-colors ${
             hideApiNoise
               ? "bg-neon-purple/10 text-neon-purple"
               : "text-ps-text-muted hover:text-ps-text-secondary"
           }`}
-          title="Hide short-lived api-source sessions (< 1KB, < 1 min) that dominate the list during stress testing"
+          title="Hide api-source sessions under a kilobyte that lived less than a minute"
         >
           <EyeOff className="w-3 h-3" />
           Hide API noise

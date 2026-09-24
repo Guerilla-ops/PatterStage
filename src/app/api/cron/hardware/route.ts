@@ -1,20 +1,16 @@
 import { NextRequest } from "next/server";
 
-import { requireAuthenticatedHostWrites, isReadOnly } from "@/lib/api-auth";
-import { serviceUnavailable } from "@/lib/api-response";
-import { readOnlyMessage } from "@/lib/read-only";
+import { requireAuthenticatedHostWrites, isReadOnly } from "@/lib/api/api-auth";
+import { serviceUnavailable } from "@/lib/api/api-response";
+import { readOnlyMessage } from "@/lib/api/read-only";
 import { handleCreateHardwareCron } from "@/lib/hardware-cron-handlers/create";
 import { handleDeleteHardwareCron } from "@/lib/hardware-cron-handlers/delete";
 import { handleListHardwareCrons } from "@/lib/hardware-cron-handlers/list";
 import { handleUpdateHardwareCron } from "@/lib/hardware-cron-handlers/update";
 
 /**
- * Hardware Cron API — System crontab management
- *
- * GET    /api/cron/hardware         — List all hardware cron jobs
- * POST   /api/cron/hardware         — Create a new hardware cron job (or { action: "pauseAll" } to disable all)
- * PUT    /api/cron/hardware         — Update an existing hardware cron job
- * DELETE /api/cron/hardware?id=...  — Delete a hardware cron job by ID
+ * Hardware Cron API — system crontab management. A thin auth + gate +
+ * dispatch layer; the work lives under src/lib/hardware-cron-handlers/.
  *
  * Hardware cron jobs are system cron entries managed via crontab(1).
  * They survive agent restarts and run independently of any agent install.
@@ -25,17 +21,16 @@ import { handleUpdateHardwareCron } from "@/lib/hardware-cron-handlers/update";
  * We identify our managed entries by their script path prefix:
  *   PS_SCRIPTS_DIR (default: PS_DATA_DIR/scripts)
  *
- * This file is a thin auth + gate + dispatch layer. The work lives under
- * src/lib/hardware-cron-handlers/:
- *
- *   crontab-command.ts  turn caller text into a safe crontab line
- *   crontab-store.ts    read/parse/serialise the crontab itself
- *   disabled-state.ts   the paused-job id sidecar
- *   list/create/update/delete.ts   one per HTTP verb
- *
  * Authentication is enforced once in src/proxy.ts, and so is read-only mode,
- * which refuses unsafe methods before any handler runs. No route in this
- * directory carries either check (T-0048).
+ * which refuses unsafe methods before any handler runs.
+ *
+ * The three handlers below nonetheless carry an isReadOnly() check of their
+ * own, beside requireAuthenticatedHostWrites, and both doublings are
+ * deliberate. A crontab line this route writes is executed later by cron, so
+ * this is one of the three host-side surfaces proxy.ts:58-63 names: a harness
+ * that calls a handler directly, without the proxy, must still be refused.
+ * app-06 (ruled 2026-09-12) deleted the eleven route-level read-only checks
+ * that were NOT host-side and kept these.
  */
 
 export async function GET(_request: NextRequest) {

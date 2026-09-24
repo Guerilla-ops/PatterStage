@@ -1,20 +1,25 @@
 /** @jest-environment jsdom */
+/* eslint-disable @typescript-eslint/no-require-imports */
 
 /**
- * Regression tests for the chat page's toast rendering.
+ * The chat page with the gateway offline.
  *
- * History: the chat page previously called `useToast()` to get
- * `showToast` but never rendered the returned `toastElement`. The result
- * was that *every* toast (delete success, gateway offline, chat error,
- * download success) was silent — no UI feedback. This test asserts the
- * bug stays fixed: triggering any toast-bearing code path must produce
- * a Toast element in the rendered output.
+ * History: this began as a regression test for the chat page's toast
+ * rendering. The page once called `useToast()` for `showToast` and never
+ * rendered the returned `toastElement`, so every toast was silent, and the
+ * test pressed Send with the gateway offline to see the "Gateway is offline"
+ * toast appear. FeedbackProvider owns the stack now (T-0096), and since U18
+ * (T-0132) an offline gateway disables the composer with the reason rather
+ * than accepting a message and toasting. What this suite holds is that
+ * contract, and that the toast stack is lifted above the composer while the
+ * screen is mounted.
  *
  * The page imports a lot of heavy dependencies (useGatewayHealth with
  * fetch timers, chat-utils with localStorage, sub-components), so we
- * mock aggressively to isolate the toast-rendering contract.
+ * mock aggressively.
  */
-import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
+import { renderWithQuery } from "../helpers/render-with-query";
 
 // ── Icon mocks (lucide-react is a peer dep of every component) ──
 jest.mock("lucide-react", () => {
@@ -28,10 +33,7 @@ jest.mock("lucide-react", () => {
 });
 
 // ── Sub-component mocks ────────────────────────────────────────
-jest.mock("@/components/layout/AppPageShell", () => ({
-  __esModule: true,
-  default: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-}));
+jest.mock("@/components/layout/AppPageShell", () => require("../helpers/mocks").appPageShellMock());
 
 jest.mock("@/components/layout/PageHeader", () => ({
   __esModule: true,
@@ -62,10 +64,8 @@ jest.mock("@/components/ui/Select", () => ({
   ),
 }));
 
-jest.mock("@/components/chat/TypingIndicator", () => ({
-  __esModule: true,
-  default: () => <div data-testid="typing-indicator" />,
-}));
+// The typing indicator is the page's own since C6 (T-0143); it renders only
+// while a turn streams, which this suite never starts.
 
 jest.mock("@/components/chat/GatewayBanner", () => ({
   __esModule: true,
@@ -79,7 +79,7 @@ jest.mock("@/hooks/useGatewayHealth", () => ({
     // network call. That's the easiest toast path to trigger in a unit test.
     online: false,
     authConfigured: true,
-    agentDefaultModelSet: false,
+    modelReadiness: null,
     registryModelIds: [],
     modelLabels: {},
     gatewayModelIds: [],
@@ -89,9 +89,15 @@ jest.mock("@/hooks/useGatewayHealth", () => ({
 }));
 
 // ── chat-utils mock: the server-API surface the hook imports ──
-jest.mock("@/lib/chat-utils", () => ({
+jest.mock("@/lib/chat/chat-utils", () => ({
   fetchConversations: jest.fn().mockResolvedValue([]),
-  fetchConversation: jest.fn().mockResolvedValue(null),
+  // fetchConversation answers `{ ok, error?, conversation?, messages? }` since
+  // B13 (D43/D49) — it used to answer `… | null`, which could not tell an empty
+  // transcript from a failed read. No conversation is ever selected in this
+  // suite, so the value is never read; it is corrected here so the mock keeps
+  // describing the real module rather than becoming a trap for the next test
+  // that does select one.
+  fetchConversation: jest.fn().mockResolvedValue({ ok: false, error: "not used by this suite" }),
   createConversationApi: jest.fn().mockResolvedValue(null),
   deleteConversationApi: jest.fn().mockResolvedValue({ ok: true }),
   sendMessageApi: jest.fn().mockResolvedValue({ ok: true, result: { userMessageId: "u", assistantMessageId: "a" } }),
@@ -142,44 +148,30 @@ beforeEach(() => {
   jest.clearAllMocks();
 });
 
-// jsdom does not implement Element.scrollIntoView — the chat page's
-// auto-scroll effect calls it. Polyfill to a no-op so the effect does
-// not throw on mount.
-if (typeof Element !== "undefined" && !Element.prototype.scrollIntoView) {
-  Element.prototype.scrollIntoView = function scrollIntoView() {
-    /* no-op for jsdom */
-  };
-}
+import ChatPage from "@/app/work/chat/page";
 
-import ChatPage from "@/app/orchestration/chat/page";
-
-describe("ChatPage — toast rendering regression", () => {
-  it("renders the toast portal node in the DOM (toastElement is in the tree)", async () => {
-    render(<ChatPage />);
-    // The chat page used to call useToast() and destructure only
-    // `showToast`, silently dropping the `toastElement` portal. We
-    // type a message, hit send — and because the mocked gateway is
-    // offline, the send path emits the "Gateway is offline" toast.
-    // If `toastElement` is missing from the page tree, the toast text
-    // never reaches the DOM and this test fails.
-    const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
-    await act(async () => {
-      fireEvent.change(textarea, { target: { value: "hello" } });
-    });
-
-    // Send button is the small action button next to the textarea.
+describe("ChatPage — an offline gateway, said where the operator is looking", () => {
+  // This test used to type a message and press Send with the gateway offline,
+  // and expect the "Gateway is offline" toast, which proved the page rendered
+  // `toastElement`. Two things moved under it. FeedbackProvider owns the toast
+  // stack now (T-0096), so `toastElement` is always null and the regression it
+  // guarded cannot recur in that form. And since U18 (T-0132) an offline
+  // gateway disables the composer with the reason as its placeholder rather
+  // than accepting a message and toasting; the Send button is disabled with
+  // it, so the old path cannot be walked. What the page owes now is the
+  // disabled composer, its reason, and the toast stack lifted above it.
+  it("disables the composer, says why, and lifts the toast stack above it", async () => {
+    const { unmount } = renderWithQuery(<ChatPage />);
+    const textarea = screen.getByRole("textbox", { name: "Message" }) as HTMLTextAreaElement;
+    await waitFor(() => expect(textarea).toBeDisabled());
+    expect(textarea.placeholder).toMatch(/hermes gateway start/);
     // The send-icon mock output is `[Send]`, so the button text contains it.
     const sendButton = screen.getByText("[Send]").closest("button") as HTMLButtonElement;
-    expect(sendButton).toBeTruthy();
-    await act(async () => {
-      fireEvent.click(sendButton);
-    });
-
-    // The toast should appear with the offline message.
-    await waitFor(() => {
-      expect(
-        screen.getByText(/Gateway is offline/i),
-      ).toBeInTheDocument();
-    });
+    expect(sendButton).toBeDisabled();
+    // The stack rests above the composer on this screen, and only while the
+    // screen is mounted.
+    expect(document.documentElement.style.getPropertyValue("--ps-toast-lift")).not.toBe("");
+    unmount();
+    expect(document.documentElement.style.getPropertyValue("--ps-toast-lift")).toBe("");
   });
 });

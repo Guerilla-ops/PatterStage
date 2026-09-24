@@ -4,13 +4,13 @@ import { dirname } from "path";
 
 import { resolveProfileHermesHome, buildProfileHermesPathBundle } from "@/modules/hermes/lib/profile-paths";
 import { getBehaviorFiles } from "@/modules/hermes/lib/behavior-files";
-import { logApiError, serverErrorFromCatch } from "@/lib/api-logger";
-import { parseJsonBody } from "@/lib/parse-json-body";
+import { logApiError, serverErrorFromCatch } from "@/lib/api/api-logger";
+import { parseJsonBody } from "@/lib/api/parse-json-body";
 import { safeStat } from "@/lib/fs/fs-stats";
 import { ensureDir, backupTimestamp } from "@/lib/fs/fs-helpers";
 import { resolveSafeProfileName } from "@/lib/fs/path-security";
 
-import { appendAuditLine } from "@/lib/audit-log";
+import { appendAuditLine } from "@/lib/api/audit-log";
 import { ensureDb } from "@/lib/db";
 import { getProfile } from "@/modules/hermes/lib/profiles-repository";
 import {
@@ -23,8 +23,9 @@ import {
   applyProfileOrRootPatchOrFail,
   pushProfileOrRootOrFail,
 } from "@/modules/hermes/handlers/profile-patch";
-import { badRequest, notFound, ok } from "@/lib/api-response";
+import { badRequest, notFound, ok } from "@/lib/api/api-response";
 import { maskEnvFileContent } from "@/lib/secret-mask";
+import { recordEvent } from "@/lib/analytics/record-event";
 import {
   configYamlToColumnValues,
   platformToolsetsFromJson,
@@ -40,14 +41,9 @@ type FileResponseVariant = {
 };
 
 /**
- * Build the GET response payload for a file-read branch. The 3 branches
- * (managed-file hit, missing file, real-file read) all share the same
- * `key`/`name`/`description` envelope and only differ in `content`,
- * `size`, `lastModified`, and `exists`. This helper centralizes the
- * common envelope so the per-branch code can focus on the variant.
- * `lastModified: undefined` is omitted from the payload (matching the
- * original shape where the "missing file" branch had no `lastModified`
- * field at all).
+ * Build the GET response payload for a file-read branch. `lastModified:
+ * undefined` is omitted from the payload, so the "missing file" branch
+ * carries no `lastModified` field.
  *
  * Returns the INNER payload (not `{ data: payload }`): the callers wrap it
  * with `ok()`, which adds the single `{ data }` envelope. (A prior version
@@ -59,6 +55,7 @@ function buildFileResponse(
   resolved: { path: string; name: string; description: string },
   key: string,
   variant: FileResponseVariant,
+  profile: string,
 ) {
   const data: {
     key: string;
@@ -67,6 +64,8 @@ function buildFileResponse(
     description: string;
     exists: boolean;
     size: number;
+    /** Whose file this is. The Settings editors name the agent they write to (T-0113). */
+    profile: string;
     lastModified?: string;
   } = {
     key,
@@ -75,6 +74,7 @@ function buildFileResponse(
     description: resolved.description,
     exists: variant.exists,
     size: variant.size,
+    profile,
   };
   if (variant.lastModified !== undefined) {
     data.lastModified = variant.lastModified;
@@ -82,7 +82,6 @@ function buildFileResponse(
   return data;
 }
 
-/** Build a path lookup map from a Hermes path bundle. */
 function getBundlePathMap(bundle: ReturnType<typeof buildProfileHermesPathBundle>): Record<string, string> {
   return {
     soul: bundle.soul,
@@ -98,12 +97,9 @@ function getBundlePathMap(bundle: ReturnType<typeof buildProfileHermesPathBundle
 
 /**
  * Resolve `profileParam` to a safe profile slug, falling back to `"default"`
- * when the input is invalid. Used by the GET + PUT try-blocks after
- * `resolveFilePath` has already validated the input (so the invalid branch
- * is unreachable in practice, but the defensive fallback preserves the
- * pre-refactor behaviour). Centralises the 2-line
- * `const prof = resolveSafeProfileName(profile); const profileSlug = prof.ok ? prof.profile : "default"`
- * pattern that was duplicated at GET line 136-137 and PUT line 214-215.
+ * when the input is invalid. `resolveFilePath` has already validated the
+ * input by the time GET and PUT call this, so the invalid branch is
+ * unreachable in practice; the fallback is defensive.
  */
 function safeProfileSlug(profileParam: string | null): string {
   const prof = resolveSafeProfileName(profileParam);
@@ -157,24 +153,29 @@ export async function GET(
       const stored = readManagedFileContent(profileSlug, key as ManagedFileKey);
       if (stored) {
         return ok(
-          buildFileResponse(resolved, key, {
-            content: stored.content,
-            size: stored.content.length,
-            exists: stored.content.length > 0,
-            lastModified: stored.updatedAt,
-          }),
+          buildFileResponse(
+            resolved,
+            key,
+            {
+              content: stored.content,
+              size: stored.content.length,
+              exists: stored.content.length > 0,
+              lastModified: stored.updatedAt,
+            },
+            profileSlug,
+          ),
         );
       }
     }
 
     if (!existsSync(resolved.path)) {
       return ok(
-        buildFileResponse(resolved, key, {
-          content: "",
-          size: 0,
-          exists: false,
-          lastModified: undefined,
-        }),
+        buildFileResponse(
+          resolved,
+          key,
+          { content: "", size: 0, exists: false, lastModified: undefined },
+          profileSlug,
+        ),
       );
     }
 
@@ -186,12 +187,12 @@ export async function GET(
     // File confirmed to exist above; safeStat never null.
     const stats = safeStat(resolved.path)!;
     return ok(
-      buildFileResponse(resolved, key, {
-        content,
-        size: stats.size,
-        exists: true,
-        lastModified: stats.mtime,
-      }),
+      buildFileResponse(
+        resolved,
+        key,
+        { content, size: stats.size, exists: true, lastModified: stats.mtime },
+        profileSlug,
+      ),
     );
   }
   catch (error) {
@@ -262,16 +263,27 @@ export async function PUT(
 
     if (isManagedKey(key)) {
       if (key === "config") {
-        const cols = configYamlToColumnValues(content);
+        // configYamlToColumnValues now THROWS on unparseable YAML rather than
+        // silently dropping every preserved section (T-0086). Answer the same
+        // 409 shape the PUT /api/config refusal established in T-0060: the
+        // fault's first line, never the body (it holds api_key lines), and the
+        // operator keeps their file.
+        let cols: ReturnType<typeof configYamlToColumnValues>;
+        try {
+          cols = configYamlToColumnValues(content);
+        } catch (err) {
+          const firstLine = (err instanceof Error ? err.message : String(err))
+            .split(String.fromCharCode(10))[0]
+            .trim();
+          return NextResponse.json(
+            { error: `config.yaml was not saved: ${firstLine}` },
+            { status: 409 },
+          );
+        }
         const platformToolsetsJson = serializeJsonToolsets(
           normalizePlatformToolsets(platformToolsetsFromJson(cols.platformToolsetsJson)),
         );
         writeManagedFileContent(profileSlug, "config", cols.configYaml);
-        // applyProfileOrRootPatchOrFail collapses the 4-line
-        // apply+toPatchResponse+assert+return-err dance into 1 call
-        // + 1 instanceof check. Replaces the if/else update block
-        // AND the separate push block below (2 places, 16 lines
-        // total).
         const configPatch = {
           personality: cols.personality,
           disabledSkillsJson: cols.disabledSkillsJson,
@@ -287,20 +299,29 @@ export async function PUT(
         if (result instanceof NextResponse) return result;
       }
       else {
-        // Non-config managed file (SOUL.md, AGENTS.md, etc.) — write
-        // the column-free file body to the managed-files table, then
-        // push. pushProfileOrRootOrFail is the push-only companion
-        // of applyProfileOrRootPatchOrFail — collapses the
-        // push+toPatchResponse+assert+return-err dance into 1 call
-        // + 1 instanceof check. writeManagedFileContent has already
-        // updated the managed-files table; we just need the post-
-        // write push to mirror to Hermes.
-        writeManagedFileContent(profileSlug, key as ManagedFileKey, content);
+        // The write answers whether it happened. HERMES.md exists only on the
+        // root agent, so on a named profile this returns false and used to be
+        // discarded: the route pushed, audited and answered 200 over a save
+        // that wrote nothing, and the editor showed the operator's text back
+        // to them from its own state (T-0102, D28).
+        if (!writeManagedFileContent(profileSlug, key as ManagedFileKey, content)) {
+          return badRequest(
+            key === "hermes"
+              ? `HERMES.md belongs to the root agent — the profile "${profileSlug}" has no framework file to save.`
+              : `${key} could not be saved for the profile "${profileSlug}".`,
+          );
+        }
         const result = pushProfileOrRootOrFail(
           profileSlug,
           "Failed to sync profile to Hermes",
         );
         if (result instanceof NextResponse) return result;
+        // SOUL.md is the personality. The Identity tab (decision 11, B9)
+        // writes it through this door, so the Shapeshifter ledger lives here
+        // and not only on the personality route it replaces (T-0098).
+        if (key === "soul") {
+          recordEvent("personality.changed", { entityType: "personality", entityId: profileSlug, profile: profileSlug });
+        }
       }
     }
     else {

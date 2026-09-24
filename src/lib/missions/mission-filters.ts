@@ -2,16 +2,10 @@
 // mission-filters.ts — pure selectors for the missions page
 // ═══════════════════════════════════════════════════════════════
 //
-// Extracted from useMissionsPage so the board-filtering, count, and
-// category-pill logic is pure + unit-testable in isolation (the hook
-// just wraps each in a useMemo). Every function is generic over the
-// minimal field set it reads, so there is no import cycle back to the
-// hook's MissionRow type.
+// Every function is generic over the minimal field set it reads, so there is
+// no import cycle back to the hook's MissionRow type.
 
 import {
-  isMissionActive,
-  isMissionDraft,
-  isMissionQueuedForRun,
   missionBoardColumn,
 } from "@/lib/missions/mission-board";
 import {
@@ -42,10 +36,7 @@ export interface MissionFilterCriteria {
   search: string;
 }
 
-/**
- * Filter the missions list by board column, category, and search text.
- * Byte-equivalent to the inline `missions.filter(...)` the hook used.
- */
+/** Filter the missions list by board column, category, and search text. */
 export function filterMissions<M extends MissionFilterFields>(
   missions: M[],
   { filter, missionCategoryFilter, search }: MissionFilterCriteria,
@@ -72,35 +63,10 @@ export function filterMissions<M extends MissionFilterFields>(
   });
 }
 
-export interface MissionCounts {
-  active: number;
-  completed: number;
-  failed: number;
-  drafts: number;
-  queued: number;
-}
-
-/**
- * Single-pass count of the 5 board buckets. The buckets are NOT mutually
- * exclusive — a `status:"queued" && queuedForRun:true` mission increments
- * both `active` and `queued`, matching the original 5 independent
- * `.filter().length` passes. Independent `if` branches preserve that.
- */
-export function computeMissionCounts<M extends MissionFilterFields>(
-  missions: M[],
-): MissionCounts {
-  return missions.reduce(
-    (acc, m) => {
-      if (isMissionActive(m)) acc.active += 1;
-      if (m.status === "successful") acc.completed += 1;
-      if (m.status === "failed") acc.failed += 1;
-      if (isMissionDraft(m)) acc.drafts += 1;
-      if (isMissionQueuedForRun(m)) acc.queued += 1;
-      return acc;
-    },
-    { active: 0, completed: 0, failed: 0, drafts: 0, queued: 0 },
-  );
-}
+// computeMissionCounts and MissionCounts were here. They were a third count
+// set, in a third vocabulary, rendered by nothing: the board counts its own
+// columns and the strip beside it counted m.status. One counter now lives in
+// mission-board.ts and both surfaces read it (T-0104, C126).
 
 /** Category-filter pills for the missions board (includes Uncategorized). */
 export function computeMissionCategoryPills<
@@ -136,10 +102,7 @@ export function computeTemplateCategoryPills(
 
 type TemplateWithCategory = MissionTemplate & { categoryId?: string };
 
-/**
- * Group templates by category, then narrow to the active category filter.
- * Byte-equivalent to the hook's inline `filteredGrouped` useMemo.
- */
+/** Group templates by category, then narrow to the active category filter. */
 export function filterGroupedTemplates(
   templates: MissionTemplate[],
   categories: CategoryLike[] | MissionCategory[],

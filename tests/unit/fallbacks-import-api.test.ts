@@ -6,43 +6,13 @@ import { join } from "path";
 import * as yaml from "js-yaml";
 import type { NextRequest } from "next/server";
 
-jest.mock("next/server", () => ({
-  NextRequest: class NextRequest {
-    url: string;
-    method: string;
-    headers: Headers;
-    nextUrl: URL;
-    bodyUsed: boolean = false;
-    private _body: string;
-    constructor(url: string, init?: RequestInit) {
-      this.url = url;
-      this.method = init?.method ?? "GET";
-      this.headers = new Headers(init?.headers as HeadersInit);
-      this._body = typeof init?.body === "string" ? init.body : JSON.stringify(init?.body ?? {});
-      this.nextUrl = new URL(url);
-    }
-    async json() {
-      return JSON.parse(this._body);
-    }
-  },
-  NextResponse: class NextResponse {
-    status: number;
-    body: unknown;
-    constructor(status: number, body: unknown) {
-      this.status = status;
-      this.body = body;
-    }
-    async json() { return this.body; }
-    static json(data: unknown, init?: ResponseInit) {
-      return new NextResponse(init?.status ?? 200, data);
-    }
-  },
-}));
+// eslint-disable-next-line @typescript-eslint/no-require-imports -- jest.mock factories are hoisted above imports
+jest.mock("next/server", () => require("../helpers/mocks").nextServerMock());
 
-jest.mock("@/lib/api-logger", () => ({ logApiError: jest.fn() }));
-jest.mock("@/lib/audit-log", () => ({ appendAuditLine: jest.fn() }));
-jest.mock("@/lib/api-auth", () => ({ requireAuth: jest.fn(() => null) }));
-jest.mock("@/lib/parse-json-body", () => ({
+jest.mock("@/lib/api/api-logger", () => ({ logApiError: jest.fn() }));
+jest.mock("@/lib/api/audit-log", () => ({ appendAuditLine: jest.fn() }));
+jest.mock("@/lib/api/api-auth", () => ({ requireAuth: jest.fn(() => null) }));
+jest.mock("@/lib/api/parse-json-body", () => ({
   parseJsonBody: jest.fn(async (req: { json: () => Promise<unknown> }) => req.json()),
   // parseAndValidateJsonBody composes parseJsonBody + zod schema.safeParse.
   // Re-expose the real one so the route's validation step is exercised
@@ -71,7 +41,7 @@ const mockListChain = jest.fn();
 const mockAddEntry = jest.fn();
 const mockUpsertModel = jest.fn();
 
-jest.mock("@/lib/fallbacks-repository", () => ({
+jest.mock("@/lib/models/fallbacks-repository", () => ({
   addFallbackEntry: (...args: unknown[]) => mockAddEntry(...args),
   listFallbackChain: (...args: unknown[]) => mockListChain(...args),
   getFallbackConfig: (...args: unknown[]) => mockGetConfig(...args),
@@ -82,7 +52,7 @@ jest.mock("@/modules/hermes/lib/fallback-sync", () => ({
   syncEnabledFallbackChainToHermes: (...args: unknown[]) => mockSync(...args),
 }));
 
-jest.mock("@/lib/models-repository", () => ({
+jest.mock("@/lib/models/models-repository", () => ({
   upsertModel: (...args: unknown[]) => mockUpsertModel(...args),
 }));
 

@@ -32,6 +32,9 @@ export function useModelsPage() {
     loadAll: registry.loadAll,
     setDefaults: registry.setDefaults,
     showToast,
+    // The drift banner's Push writes config.model, which is the agent
+    // default and nothing else (T-0100).
+    agentDefaultId: registry.defaults.agent,
   });
 
   const chain = useModelFallbackChain({
@@ -51,7 +54,9 @@ export function useModelsPage() {
     modelOptions: registry.modelOptions,
     credentialOptions: registry.credentialOptions,
     defaults: registry.defaults,
+    modelReadiness: registry.modelReadiness,
     loading: registry.loading,
+    settled: registry.settled,
     error: registry.error,
     drift: registry.drift,
     refreshing: actions.refreshing,
@@ -76,10 +81,16 @@ export function useModelsPage() {
     handlePull: actions.handlePull,
     handleSaved: actions.handleSaved,
     handleDelete: actions.handleDelete,
+    handleAddCredential: actions.handleAddCredential,
+    addingCredential: actions.addingCredential,
     handleDeleteCredential: actions.handleDeleteCredential,
+    handleRotateCredential: actions.handleRotateCredential,
     busyCredentialId: actions.busyCredentialId,
     handleSetDefault: actions.handleSetDefault,
     handleBulkAuxiliaryChange: actions.handleBulkAuxiliaryChange,
+    handleDriftPull: actions.handleDriftPull,
+    handleDriftPush: actions.handleDriftPush,
+    busyDriftLine: actions.busyDriftLine,
     handleFallbackReorder: chain.handleFallbackReorder,
     handleFallbackToggle: chain.handleFallbackToggle,
     handleFallbackDelete: chain.handleFallbackDelete,

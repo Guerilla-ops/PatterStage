@@ -2,12 +2,11 @@
 // useChatSend — sending a turn, stopping it, approving a tool
 // ═══════════════════════════════════════════════════════════════
 //
-// Split out of useChatPage (Phase 4 god-file decomposition). Owns the
-// turn lifecycle: create the conversation if there isn't one, render the
-// user row and the assistant placeholder optimistically, POST the turn,
-// adopt the server-assigned ids, then hand off to whichever stream the
-// mode calls for — the run-event SSE in "agent" mode, a raw gateway
-// stream in "fast" mode.
+// Owns the turn lifecycle: create the conversation if there isn't one,
+// render the user row and the assistant placeholder optimistically, POST
+// the turn, adopt the server-assigned ids, then hand off to whichever
+// stream the mode calls for — the run-event SSE in "agent" mode, a raw
+// gateway stream in "fast" mode.
 //
 // Also owns the two effects that keep the transcript in step with the
 // active conversation: loading its messages (and adopting its model)
@@ -18,7 +17,7 @@
 
 "use client";
 
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { Dispatch, KeyboardEvent, RefObject, MutableRefObject, SetStateAction } from "react";
 
 import type { ToastType } from "@/components/ui/Toast";
@@ -33,7 +32,7 @@ import {
   resolveApprovalApi,
   toApiMessages,
   streamChatResponse,
-} from "@/lib/chat-utils";
+} from "@/lib/chat/chat-utils";
 import { localMessage, type PendingApproval } from "@/hooks/chat-local-message";
 
 type ToastFn = (message: string, type?: ToastType) => void;
@@ -95,32 +94,64 @@ export function useChatSend({
   gatewayOnline,
   showToast,
 }: UseChatSendArgs) {
+  // The active conversation's read, when it failed. Kept apart from the
+  // transcript for the same reason the list keeps `listError` apart from the
+  // list (T-0096, the read contract): the effect below used to return early on
+  // a failed read, which left the PREVIOUS conversation's turns on screen under
+  // the newly selected title and said nothing at all (D49). Now the transcript
+  // is cleared and the reason is rendered in its place.
+  const [conversationError, setConversationError] = useState<string | null>(null);
+  // Bumped by Retry. The read lives in an effect keyed on the active id, so
+  // re-running it for the SAME id needs a second key.
+  const [reloadNonce, setReloadNonce] = useState(0);
+
   // ── Load the active conversation's messages when it changes ──
   useEffect(() => {
     if (!activeId) {
       setMessages([]);
+      setConversationError(null);
       return;
     }
     let cancelled = false;
     void (async () => {
       const loaded = await fetchConversation(activeId);
-      if (cancelled || !loaded) return;
+      if (cancelled) return;
+      if (!loaded.ok || !loaded.messages || !loaded.conversation) {
+        setMessages([]); // never show another conversation's turns
+        setConversationError(loaded.error ?? "Failed to load conversation");
+        return;
+      }
+      setConversationError(null);
       setMessages(loaded.messages);
       setModel(loaded.conversation.model || CHAT_DEFAULT_MODEL);
     })();
     return () => {
       cancelled = true;
     };
-  }, [activeId, setMessages, setModel]);
+  }, [activeId, reloadNonce, setMessages, setModel]);
 
-  // Auto-scroll on new/updated messages.
+  /** Re-run the read above for the conversation that is already selected. */
+  const reloadActiveConversation = useCallback(() => {
+    setReloadNonce((n) => n + 1);
+  }, []);
+
+  // Auto-scroll on new/updated messages. The transcript's OWN scroller moves,
+  // not every scrollable ancestor: scrollIntoView also scrolled <main> by the
+  // mobile header's 48px, which put the Conversations opener under the sticky
+  // header on a phone (T-0131). Smoothness is the scroller's CSS
+  // (scroll-smooth), which reduced motion turns off with everything else.
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    const scroller = messagesEndRef.current?.parentElement;
+    // Optional call: jsdom draws nothing and has no scrollTo on an element.
+    scroller?.scrollTo?.({ top: scroller.scrollHeight });
   }, [messages, messagesEndRef]);
 
   // ── Send ────────────────────────────────────────────────────
-  const handleSend = useCallback(async () => {
-    const text = input.trim();
+  /**
+   * Send `text` as a new turn on top of `history`. handleSend runs it for the
+   * composer's input; handleRetry runs it for the words of a failed turn.
+   */
+  const sendText = useCallback(async (text: string, history: ChatMessage[]) => {
     if (!text) return;
     if (gatewayOnline === false) {
       showToast("Gateway is offline — start it with: hermes gateway start", "error");
@@ -148,7 +179,7 @@ export function useChatSend({
     const userMsg = localMessage(conversationId, "user", text, "complete");
     const assistantMsg = localMessage(conversationId, "assistant", "", "streaming");
     setMessages((prev) => [...prev, userMsg, assistantMsg]);
-    const priorMessages = messages;
+    const priorMessages = history;
     setInput("");
     setIsStreaming(true);
 
@@ -160,7 +191,9 @@ export function useChatSend({
         error: send.error || "Failed to send message",
       });
       setIsStreaming(false);
-      showToast(send.error || "Failed to send message", "error");
+      // The bubble is the alert, with the reason and Retry (T-0128). A toast
+      // saying the same sentence over the composer was the failure said twice,
+      // in the place the operator was about to type (T-0132).
       return;
     }
 
@@ -181,7 +214,7 @@ export function useChatSend({
       // Fast mode — stream a raw model reply from the gateway.
       const controller = new AbortController();
       abortRef.current = controller;
-      const acc = { content: "" };
+      const acc = { content: "", error: null as string | null };
       await streamChatResponse(
         toApiMessages(priorMessages, text),
         model,
@@ -191,13 +224,18 @@ export function useChatSend({
           acc.content += delta;
           updateLocalMessage(assistantMessageId, { content: acc.content, status: "streaming" });
         },
-        (errMsg) => showToast(errMsg, "error"),
+        // The stream's own reason is the bubble's reason. It used to be a
+        // toast, beside a bubble that said only that nothing came back
+        // (T-0132).
+        (errMsg) => {
+          acc.error = errMsg;
+        },
       );
       if (gen !== streamGenRef.current) return;
       const status = acc.content ? "complete" : "failed";
       const error = acc.content
         ? null
-        : "The model returned nothing. Check the gateway is reachable and the model is configured.";
+        : (acc.error ?? "The model returned nothing. Check the gateway is reachable and the model is configured.");
       updateLocalMessage(assistantMessageId, { content: acc.content, status, error });
       setIsStreaming(false);
       abortRef.current = null;
@@ -214,9 +252,7 @@ export function useChatSend({
       void loadConversations();
     }
   }, [
-    input,
     activeId,
-    messages,
     mode,
     model,
     gatewayOnline,
@@ -235,6 +271,30 @@ export function useChatSend({
   ]);
 
   // ── Stop the active run ─────────────────────────────────────
+  const handleSend = useCallback(() => sendText(input.trim(), messages), [sendText, input, messages]);
+
+  /**
+   * Retry a failed assistant turn. The failed turn and the user turn that
+   * asked for it leave the transcript and the same words go again as a new
+   * turn, so the screen reads as one attempt rather than a prompt stated
+   * twice with a failure between. A second failure lands on the new turn
+   * with its own reason and its own Retry (T-0128).
+   */
+  const handleRetry = useCallback(
+    async (failedId: string) => {
+      const at = messages.findIndex((m) => m.id === failedId);
+      if (at === -1 || messages[at].role !== "assistant" || messages[at].status !== "failed") return;
+      let askedAt = at - 1;
+      while (askedAt >= 0 && messages[askedAt].role !== "user") askedAt -= 1;
+      if (askedAt < 0) return;
+      const asked = messages[askedAt];
+      const remaining = messages.filter((m) => m.id !== failedId && m.id !== asked.id);
+      setMessages(remaining);
+      await sendText(asked.content, remaining);
+    },
+    [messages, sendText, setMessages],
+  );
+
   const handleStop = useCallback(async () => {
     streamGenRef.current++; // supersede any in-flight stream callbacks
     closeStream();
@@ -274,8 +334,11 @@ export function useChatSend({
 
   return {
     handleSend,
+    handleRetry,
     handleStop,
     handleApproval,
     handleKeyDown,
+    conversationError,
+    reloadActiveConversation,
   };
 }

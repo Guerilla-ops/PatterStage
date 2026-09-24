@@ -68,12 +68,12 @@ export function createWorkflowFromDef(input: WorkflowDef): ComposerWorkflowGraph
         workflowId = existing.id;
         version = existing.version + 1;
         getDb().prepare("DELETE FROM composer_nodes WHERE workflow_id = ?").run(workflowId); // edges cascade
-        getDb().prepare("UPDATE composer_workflows SET name = ?, description = ?, version = ?, updated_at = ? WHERE id = ?").run(def.name, def.description, version, ts, workflowId);
+        getDb().prepare("UPDATE composer_workflows SET name = ?, description = COALESCE(?, description), version = ?, updated_at = ? WHERE id = ?").run(def.name, def.description ?? null, version, ts, workflowId);
       } else {
-        getDb().prepare("INSERT INTO composer_workflows (id, key, name, description, version, created_at, updated_at) VALUES (?, ?, ?, ?, 1, ?, ?)").run(workflowId, def.key, def.name, def.description, ts, ts);
+        getDb().prepare("INSERT INTO composer_workflows (id, key, name, description, version, created_at, updated_at) VALUES (?, ?, ?, ?, 1, ?, ?)").run(workflowId, def.key, def.name, def.description ?? "", ts, ts);
       }
     } else {
-      getDb().prepare("INSERT INTO composer_workflows (id, key, name, description, version, created_at, updated_at) VALUES (?, NULL, ?, ?, 1, ?, ?)").run(workflowId, def.name, def.description, ts, ts);
+      getDb().prepare("INSERT INTO composer_workflows (id, key, name, description, version, created_at, updated_at) VALUES (?, NULL, ?, ?, 1, ?, ?)").run(workflowId, def.name, def.description ?? "", ts, ts);
     }
 
     const nodeIdByKey = new Map<string, string>();
@@ -151,7 +151,8 @@ export function getOutgoingEdges(nodeId: string): ComposerEdge[] {
  * state and PUTs it wholesale — atomic, with no partial-edit races.
  */
 /** How many completed runs a structural edit would destroy. */
-function countWorkflowRuns(workflowId: string): number {
+/** How many runs a structural edit or a delete would destroy. */
+export function countWorkflowRuns(workflowId: string): number {
   const row = getDb()
     .prepare("SELECT COUNT(*) AS n FROM composer_runs WHERE workflow_id = ?")
     .get(workflowId) as { n: number } | undefined;
@@ -197,8 +198,11 @@ export function replaceWorkflowGraph(
     const ts = now();
     getDb().prepare("DELETE FROM composer_runs WHERE workflow_id = ?").run(workflowId); // cascades node_runs + approvals
     getDb().prepare("DELETE FROM composer_nodes WHERE workflow_id = ?").run(workflowId); // edges cascade
-    getDb().prepare("UPDATE composer_workflows SET name = ?, description = ?, version = version + 1, updated_at = ? WHERE id = ?")
-      .run(def.name, def.description, ts, workflowId);
+    // COALESCE, not a bare write: the Build tab saves a canvas, and a canvas
+    // that carried no description blanked the stored one every time it was
+    // saved (T-0106, D2). Absent means leave it; "" means clear it.
+    getDb().prepare("UPDATE composer_workflows SET name = ?, description = COALESCE(?, description), version = version + 1, updated_at = ? WHERE id = ?")
+      .run(def.name, def.description ?? null, ts, workflowId);
 
     const nodeIdByKey = new Map<string, string>();
     def.nodes.forEach((n, i) => {
@@ -348,7 +352,7 @@ export function updateNodeRun(id: string, input: UpdateNodeRunInput): ComposerNo
 // ── Approvals ────────────────────────────────────────────────────
 export function recordComposerApproval(input: { composerRunId: string; nodeId: string; action: ApprovalAction; note?: string | null; decidedBy?: string }): ComposerApproval {
   const id = uuid();
-  const approved = input.action === "accept" || input.action === "add_feature";
+  const approved = input.action === "accept";
   getDb().prepare(`INSERT INTO composer_approvals (id, composer_run_id, node_id, action, approved, note, decided_by, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
     .run(id, input.composerRunId, input.nodeId, input.action, approved ? 1 : 0, input.note ?? null, input.decidedBy ?? "user", now());
@@ -374,7 +378,9 @@ export function insertWorkflowEdge(edge: {
   fromNodeId: string;
   toNodeId: string;
   condition: string;
-  label: string;
+  /** Nullable, as the column is: an unlabelled edge is the ordinary case, and
+   *  createWorkflowFromDef has always written null here. */
+  label: string | null;
   createdAt: string;
 }): void {
   getDb()
@@ -385,6 +391,60 @@ export function insertWorkflowEdge(edge: {
 }
 
 /** Replace one node's serialised config. */
+/**
+ * Clear the End flag on one node, leaving everything else about it alone.
+ *
+ * Exists for the seed repair: a stage marked End runs no agent, so a stage that
+ * was meant to produce something and got marked End produces nothing and the run
+ * still reports success. Narrow rather than a general node update, because that
+ * is the only field the repair is entitled to touch.
+ */
+export function clearWorkflowNodeTerminal(nodeId: string): void {
+  getDb().prepare("UPDATE composer_nodes SET is_terminal = 0 WHERE id = ?").run(nodeId);
+}
+
+/**
+ * Add one node to a workflow that already exists.
+ *
+ * `createWorkflowFromDef` builds a whole workflow from a definition and is
+ * idempotent by key, so it cannot add a missing end marker to an install that
+ * already has the workflow. This can, and returns the row so the caller can
+ * wire an edge to it.
+ */
+export function insertWorkflowNode(node: {
+  id: string;
+  workflowId: string;
+  key: string;
+  label: string;
+  kind: string;
+  gate: string;
+  isStart: boolean;
+  isTerminal: boolean;
+  configJson: string | null;
+  pos: number;
+  createdAt: string;
+}): ComposerNode {
+  getDb()
+    .prepare(
+      `INSERT INTO composer_nodes (id, workflow_id, key, label, kind, gate, is_start, is_terminal, config_json, pos, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      node.id,
+      node.workflowId,
+      node.key,
+      node.label,
+      node.kind,
+      node.gate,
+      node.isStart ? 1 : 0,
+      node.isTerminal ? 1 : 0,
+      node.configJson,
+      node.pos,
+      node.createdAt,
+    );
+  return getNode(node.id)!;
+}
+
 export function updateWorkflowNodeConfig(nodeId: string, configJson: string): void {
   getDb()
     .prepare("UPDATE composer_nodes SET config_json = ? WHERE id = ?")

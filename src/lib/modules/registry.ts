@@ -1,137 +1,110 @@
 // ═══════════════════════════════════════════════════════════════
 // modules/registry.ts — the modules PatterStage ships (ADR-0005)
 //
-// One list. The sidebar and the e2e route matrix are both DERIVED from it, so
-// adding a surface no longer means editing a hardcoded array in core and then
-// remembering to mirror it into a test file by hand. (That mirror had already
-// drifted: it was missing /laboratory/artifacts.)
+// One list; the sidebar, the e2e route matrix and every page title derive from
+// it, so a surface is added here and nowhere else (the hand-mirrored test copy
+// had already lost /laboratory/artifacts). `core` is the console's own verbs;
+// everything else, the Hermes surface included, is a module, which is what lets
+// a boundary check assert nothing outside the hermes module knows Hermes' layout.
 //
-// `core` is the console itself — the verbs that are PatterStage's own job.
-// Everything else is a module, including the Hermes surface, which is what makes
-// the framework-agnostic claim testable rather than aspirational: a boundary
-// check can assert that nothing outside the hermes module knows Hermes' layout.
+// The map (T-0097): five sections, verb-first, URLs renamed to match, the Rec
+// Room under /recroom/story-weaver/*; old paths answer 307 from next.config.ts
+// for one release. /agent/settings is ONE page
+// whose 27 sections are anchors derived from src/lib/config/config-sections.ts
+// (decision 7, T-0125), so a section is not a route and the matrix visits anchors.
 // ═══════════════════════════════════════════════════════════════
 
 import type { AccentColor } from "@/types/console";
 import type { ProductModule } from "./types";
-import { moduleRoutes } from "./types";
+import { NAV_SECTIONS, moduleRoutes } from "./types";
 
-/**
- * The console. Dispatch, schedule, gate and watch, plus the transcript and log
- * surfaces those verbs produce. Never gated by a flag.
- */
+/** The console's own verbs and the surfaces they produce. Never gated by a flag. */
 const coreModule: ProductModule = {
   id: "core",
   title: "Console",
   nav: [
     {
-      label: "Main",
+      label: "Home",
       links: [
-        { icon: "Zap", label: "Dashboard", href: "/", color: "cyan" },
-        { icon: "Clock", label: "Sessions", href: "/sessions", color: "orange" },
-        { icon: "Database", label: "Memory", href: "/memory", color: "pink" },
-        { icon: "ScrollText", label: "Logs", href: "/logs", color: "cyan" },
+        { icon: "Zap", label: "Dashboard", href: "/", color: "cyan", order: 1 },
+        { icon: "Trophy", label: "Quests", href: "/quests", color: "orange", order: 2 },
+        { icon: "LifeBuoy", label: "Help", href: "/help", color: "cyan", order: 3 },
       ],
     },
     {
-      label: "Orchestration",
+      label: "Work",
       links: [
-        { icon: "Rocket", label: "Missions", href: "/orchestration/missions", color: "cyan" },
+        { icon: "MessageCircle", label: "Chat", href: "/work/chat", color: "cyan", order: 1 },
+        { icon: "Rocket", label: "Missions", href: "/work/missions", color: "cyan", order: 2 },
         {
           icon: "Workflow",
           label: "Composer",
-          href: "/orchestration/composer",
+          href: "/work/composer",
           color: "purple",
+          order: 3,
           featureFlag: "composer",
         },
-        { icon: "Terminal", label: "Scripts", href: "/orchestration/scripts", color: "cyan" },
-        { icon: "MessageCircle", label: "Chat", href: "/orchestration/chat", color: "cyan" },
+        {
+          icon: "CalendarClock",
+          label: "Automation",
+          href: "/work/automation",
+          color: "orange",
+          // 6, after Scripts: Research is 4, and orders are unique per section
+          // across modules, which is what makes the merge deterministic.
+          order: 6,
+        },
+        { icon: "Terminal", label: "Scripts", href: "/work/scripts", color: "cyan", order: 5 },
       ],
+    },
+    {
+      label: "Results",
+      links: [
+        { icon: "Clock", label: "Sessions", href: "/results/sessions", color: "orange", order: 1 },
+        { icon: "ScrollText", label: "Logs", href: "/results/logs", color: "cyan", order: 4 },
+      ],
+    },
+    {
+      label: "Agent",
+      links: [{ icon: "Database", label: "Memory", href: "/agent/memory", color: "pink", order: 5 }],
     },
   ],
 };
 
 /**
- * The Hermes control plane: the agent's own configuration surfaces.
- *
- * ADR-0002 keeps PatterStage's run engine but makes Hermes one framework behind
- * the AgentRuntime port. Everything Hermes-shaped belongs in here.
+ * The Hermes control plane. ADR-0002 makes Hermes one framework behind the
+ * AgentRuntime port, so everything Hermes-shaped belongs in here.
  */
 const hermesModule: ProductModule = {
   id: "hermes",
   title: "Hermes",
   nav: [
     {
-      label: "Operations",
+      label: "Agent",
       links: [
-        { icon: "Bot", label: "Agents", href: "/operations/agents", color: "purple" },
-        { icon: "FileText", label: "Skills", href: "/operations/skills", color: "green" },
-        { icon: "Wrench", label: "Tools", href: "/operations/tools", color: "purple" },
-        { icon: "Sparkles", label: "Personalities", href: "/operations/personalities", color: "purple" },
-      ],
-    },
-  ],
-  configPinned: [
-    { icon: "Globe", label: "Models", href: "/config/models", color: "purple" },
-    { icon: "Cpu", label: "HERMES.md", href: "/config/hermes_md", color: "cyan" },
-    { icon: "Lock", label: "Environment", href: "/config/env", color: "orange" },
-  ],
-  configGroups: [
-    {
-      label: "Core",
-      defaultOpen: false,
-      links: [
-        { icon: "Cpu", label: "Agent", href: "/config/agent", color: "cyan" },
-        { icon: "RotateCcw", label: "Seed", href: "/config/seed", color: "cyan" },
-        { icon: "Activity", label: "Display", href: "/config/display", color: "green" },
-        { icon: "Layers", label: "Memory", href: "/config/memory", color: "pink" },
-      ],
-    },
-    {
-      label: "Infrastructure",
-      links: [
-        { icon: "Terminal", label: "Terminal", href: "/config/terminal", color: "orange" },
-        { icon: "HardDrive", label: "Compression", href: "/config/compression", color: "cyan" },
-        { icon: "Globe2", label: "Browser", href: "/config/browser", color: "green" },
-        { icon: "Zap", label: "Checkpoints", href: "/config/checkpoints", color: "cyan" },
-        { icon: "Code", label: "Code Execution", href: "/config/code_execution", color: "green" },
-        { icon: "ScrollText", label: "Logging", href: "/config/logging", color: "green" },
-      ],
-    },
-    {
-      label: "Security",
-      links: [
-        { icon: "Shield", label: "Security", href: "/config/security", color: "cyan" },
-        { icon: "Lock", label: "Privacy", href: "/config/privacy", color: "cyan" },
-        { icon: "ShieldCheck", label: "Approvals", href: "/config/approvals", color: "purple" },
-      ],
-    },
-    {
-      label: "Voice & Audio",
-      links: [
-        { icon: "AudioLines", label: "Text-to-Speech", href: "/config/tts", color: "pink" },
-        { icon: "Mic", label: "Speech-to-Text", href: "/config/stt", color: "purple" },
-        { icon: "Volume2", label: "Voice", href: "/config/voice", color: "pink" },
-      ],
-    },
-    {
-      label: "Automation",
-      links: [
-        { icon: "GitBranch", label: "Delegation", href: "/config/delegation", color: "green" },
-        { icon: "ListTodo", label: "Cron", href: "/config/cron", color: "orange" },
-        { icon: "RotateCcw", label: "Session Reset", href: "/config/session_reset", color: "orange" },
-        { icon: "FileText", label: "Skills", href: "/config/skills", color: "green" },
-      ],
-    },
-    {
-      label: "Integrations",
-      links: [
-        { icon: "MessageCircle", label: "Discord", href: "/config/discord", color: "purple" },
-        { icon: "Activity", label: "Streaming", href: "/config/streaming", color: "cyan" },
-        { icon: "Network", label: "Web", href: "/config/web", color: "green" },
-        { icon: "Settings2", label: "Platform Toolsets", href: "/config/platform_toolsets", color: "purple" },
-        { icon: "GitBranch", label: "Smart Routing", href: "/config/smart_model_routing", color: "purple" },
-        { icon: "Clock", label: "Human Delay", href: "/config/human_delay", color: "orange" },
+        {
+          icon: "Bot",
+          label: "Agents",
+          href: "/agent/profiles",
+          color: "purple",
+          order: 1,
+          // Personalities is the Identity tab now (decision 11, T-0103); its two
+          // old paths redirect to ?tab=identity, so no bookmark is lost.
+        },
+        { icon: "FileText", label: "Skills", href: "/agent/skills", color: "green", order: 3 },
+        { icon: "Wrench", label: "Tools", href: "/agent/tools", color: "purple", order: 4 },
+        { icon: "Globe", label: "Models", href: "/agent/models", color: "purple", order: 6 },
+        {
+          icon: "Settings",
+          label: "Settings",
+          href: "/agent/settings",
+          color: "orange",
+          order: 7,
+          // Visited by the e2e matrix, NOT drawn in the rail: Settings' own page lists both.
+          childRoutes: [
+            { label: "Restore", href: "/agent/settings/restore" },
+            { label: "System", href: "/agent/settings/system" },
+          ],
+        },
       ],
     },
   ],
@@ -143,20 +116,22 @@ const laboratoryModule: ProductModule = {
   title: "Laboratory",
   nav: [
     {
-      label: "Laboratory",
+      label: "Work",
+      links: [{ icon: "Telescope", label: "Research", href: "/work/research", color: "cyan", order: 4 }],
+    },
+    {
+      label: "Results",
       links: [
-        { icon: "BarChart3", label: "Insights", href: "/laboratory/insights", color: "green" },
-        { icon: "Telescope", label: "Deep Research", href: "/laboratory/research", color: "cyan" },
-        { icon: "FileStack", label: "Artifacts", href: "/laboratory/artifacts", color: "orange" },
+        { icon: "FileStack", label: "Artifacts", href: "/results/artifacts", color: "orange", order: 2 },
+        { icon: "BarChart3", label: "Insights", href: "/results/insights", color: "green", order: 3 },
       ],
     },
   ],
 };
 
 /**
- * Rec Room: creative work to do while your agent is working. Story Weaver is the
- * first of several, and this module is the acceptance test for the seam — if the
- * next Rec Room app needs no change to core, ADR-0005 has worked.
+ * Rec Room: creative work while the agent works. The acceptance test for the
+ * ADR-0005 seam: the next Rec Room app should need no change to core.
  */
 const recRoomModule: ProductModule = {
   id: "rec-room",
@@ -170,19 +145,18 @@ const recRoomModule: ProductModule = {
           label: "Story Weaver",
           href: "/recroom/story-weaver",
           color: "purple",
-          subLinks: [
-            { label: "Library", href: "/recroom/story-weaver/library" },
-            { label: "Create", href: "/recroom/story-weaver/create" },
-            { label: "Characters", href: "/recroom/story-weaver/characters" },
-            { label: "Themes", href: "/recroom/story-weaver/themes" },
-          ],
+          order: 1,
+          // Visited by the e2e matrix, NOT drawn in the rail. One child since
+          // decision 6 (T-0126): the library is this page, Characters and Themes
+          // are panels on Create, and the three retired addresses answer 307.
+          childRoutes: [{ label: "Create", href: "/recroom/story-weaver/create" }],
         },
       ],
     },
   ],
 };
 
-/** Registration order is display order. */
+/** Registration order is display order within a section, after `order`. */
 export const MODULES: readonly ProductModule[] = [
   coreModule,
   hermesModule,
@@ -196,39 +170,22 @@ export function getModule(id: string): ProductModule | undefined {
 
 /**
  * The module-to-accent map. WG-WEB-009 (B) rules ONE registered map of four
- * entries, and until now there was no map at all: five accents were applied
- * decoratively and a module's colour was whatever its links happened to grow.
- * Ruled at the first-build lock-in sitting of 2026-08-24 (docs/LOCKBOOK.md).
+ * entries, ruled at the first-build lock-in sitting of 2026-08-24
+ * (org/LOCKBOOK.md); before it five accents were applied decoratively.
  *
- * Five accents, four modules, so one accent leaves, and it is green:
- * `--color-neon-green` and `--color-semantic-success` are the same hex
- * (#a3ff12), and docs/design-tokens.md gives green the role "Success / online".
- * A hue that already means "this finished" cannot also mean "this is the
- * Laboratory". That is the arithmetic behind the ruling's four entries.
+ * Green leaves because `--color-neon-green` and `--color-semantic-success` are
+ * the same hex and docs/contributing/design-tokens.md gives green "Success /
+ * online": a hue that means "this finished" cannot also mean "Laboratory".
+ * The other four go to the module that already flew them most, counted over
+ * each module's own routes and components on 2026-08-24 (shared kit excluded):
+ * core cyan (186 vs 97 orange, and the Cherenkov primary), rec-room purple
+ * (115 of 117), hermes orange (47 vs 0 pink; its purple plurality of 60 loses
+ * to rec-room by two to one), laboratory pink (the remainder; it owns no hue).
  *
- * The remaining four go to the module that already flies them. Counted across
- * each module's own route tree and component directories on 2026-08-24, with
- * the shared kit (src/components/ui, providers, motion) excluded because it
- * belongs to no module:
- *
- *   core        cyan     186 uses against 97 orange, and cyan is the Cherenkov
- *                        primary. Core is the console itself.
- *   rec-room    purple   115 of its 117 non-green accent uses, and the reading
- *                        register's own `--ps-reader-accent` is a purple.
- *   hermes      orange   47 uses against 0 pink. Purple is its own plurality at
- *                        60, but rec-room holds purple by a factor of two.
- *   laboratory  pink     the remainder. Laboratory owns no hue: its top accent
- *                        is cyan at 24, which is core's by a factor of eight.
- *                        Its own use of pink (5) already beats its orange (2).
- *
- * Registering the map is not applying it. The nav links above still carry the
- * hues the tree grew, and pink still doubles as the failure tint on two
- * Laboratory surfaces, which belong on `--color-semantic-danger` before this
- * map can be read off a screen. That repaint is separate work, deliberately not
- * taken in the sitting that ruled the map.
- *
- * tests/unit/lockbook-tokens.test.ts holds the map to the ruling: one entry per
- * registered module, four entries, four distinct accents, none of them green.
+ * Registering is not applying: the nav links still carry the hues the tree
+ * grew, and pink still doubles as a failure tint on two Laboratory surfaces
+ * that belong on `--color-semantic-danger` first. That repaint is separate work.
+ * tests/unit/lockbook-tokens.test.ts holds the map to the ruling.
  */
 export const MODULE_ACCENTS = {
   core: "cyan",
@@ -238,11 +195,81 @@ export const MODULE_ACCENTS = {
 } as const satisfies Record<string, AccentColor>;
 
 /**
- * Every route every module contributes, plus the config index itself.
- * Deduplicated and sorted so the e2e matrix is stable across reorderings.
+ * Every route every module contributes, deduplicated and sorted so the e2e
+ * matrix is stable. Settings sections are not here since U11 (T-0125): they are
+ * anchors, and tests/e2e/config-sections.spec.ts visits them from the catalogue.
  */
 export function allModuleRoutes(): string[] {
-  const routes = new Set<string>(["/config"]);
+  const routes = new Set<string>();
   for (const mod of MODULES) for (const route of moduleRoutes(mod)) routes.add(route);
   return [...routes].sort();
+}
+
+/**
+ * Every rail destination in rail order: NAV_SECTIONS, each section's links by
+ * `order`, each link followed by its child routes. The same walk as
+ * `mainSections` in sidebar-config.ts, kept HERE because the Help rail needs it
+ * on the server and in node scripts, and sidebar-config imports React icons.
+ *
+ * A feature-flagged link is included: a flag hides a rail entry, it does not
+ * un-document the screen behind it. The generated `/agent/settings/<section>`
+ * editors are NOT here: they are one page rendered many times.
+ */
+export function railOrder(): string[] {
+  const out: string[] = [];
+  for (const label of NAV_SECTIONS) {
+    const links = MODULES.flatMap((mod) =>
+      (mod.nav ?? []).filter((section) => section.label === label).flatMap((section) => section.links),
+    ).sort((a, b) => a.order - b.order);
+    for (const link of links) {
+      out.push(link.href);
+      for (const child of link.childRoutes ?? []) out.push(child.href);
+    }
+  }
+  return out;
+}
+
+/**
+ * The routes documentation answers for: every module route except the Settings
+ * page's own children, which the Settings guide describes in its own sections
+ * (the settings sections are anchors since U11, T-0125, and never reach here).
+ * `docs:check` reads this and tests/e2e/app-routes.ts derives its matrix from
+ * it, so the two cannot drift.
+ */
+export function documentedRoutes(): string[] {
+  return allModuleRoutes().filter((p) => p === "/agent/settings" || !p.startsWith("/agent/settings/"));
+}
+
+/** Every (href, label) pair the registry names, sub-links included. */
+function namedRoutes(): Array<{ href: string; label: string }> {
+  const out: Array<{ href: string; label: string }> = [];
+  for (const mod of MODULES) {
+    for (const section of mod.nav ?? []) {
+      for (const link of section.links) {
+        out.push({ href: link.href, label: link.label });
+        for (const child of link.childRoutes ?? []) {
+          out.push({ href: child.href, label: child.label });
+        }
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * The registry's name for the page at `pathname`, or null when no module owns
+ * it. The longest owning href wins, so a detail path reads as its list page and
+ * a Settings section reads as Settings while `/agent/settings/system` finds its
+ * own child. PageHeader and PageTitle read this when a page passes no title,
+ * which is what keeps the rail entry and the h1 one word (T-0097, D55).
+ */
+export function labelFor(pathname: string): string | null {
+  const path = pathname.split(/[?#]/)[0].replace(/\/+$/, "") || "/";
+  let best: { href: string; label: string } | null = null;
+  for (const entry of namedRoutes()) {
+    const owns = entry.href === "/" ? path === "/" : path === entry.href || path.startsWith(entry.href + "/");
+    if (!owns) continue;
+    if (!best || entry.href.length > best.href.length) best = entry;
+  }
+  return best?.label ?? null;
 }

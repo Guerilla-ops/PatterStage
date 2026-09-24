@@ -1,3 +1,4 @@
+/** @jest-environment node */
 /**
  * /api/memory/route.ts — regression tests for the unified
  * `unsupportedWriteHandler` refactor. Before the refactor, the
@@ -16,11 +17,9 @@
  *     AUTH_HEADER should yield a 401, not a 400).
  */
 
-/** @jest-environment node */
-
 import { NextRequest } from "next/server";
 
-jest.mock("@/lib/api-logger", () => ({
+jest.mock("@/lib/api/api-logger", () => ({
   logApiError: jest.fn(),
 }));
 
@@ -28,7 +27,7 @@ jest.mock("@/lib/memory/memory-providers", () => ({
   getMemoryProviderType: jest.fn(() => "hindsight"),
 }));
 
-jest.mock("@/lib/api-auth", () => ({
+jest.mock("@/lib/api/api-auth", () => ({
 }));
 
 const SUPPORTED_VERBS = ["POST", "PUT", "DELETE"] as const;

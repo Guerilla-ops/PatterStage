@@ -7,7 +7,8 @@
 import Link from "next/link";
 
 import type { AccentColor } from "@/types/console";
-import { iconColorMap } from "@/lib/theme";
+import Card from "@/components/ui/Card";
+import { iconColorMap, pillBorderHoverMap, pillBorderMap } from "@/lib/ui/theme";
 import Sparkline from "@/components/viz/Sparkline";
 import type { NeonColor } from "@/components/viz/colors";
 
@@ -44,22 +45,28 @@ export function StatPill({
   trendColor?: NeonColor;
 }) {
   const textColor = iconColorMap[color];
-  // Derive border colour from the text colour pattern: replace "text-" with "border-"
-  const borderClass = textColor.replace(/^text-/, "border-") + "/20";
-  const base = `rounded-lg border ${borderClass} bg-dark-900/50 px-4 py-3 flex items-center gap-3 min-w-0`;
+  // From a map, not from the text colour. Deriving it with
+  // `.replace(/^text-/, "border-")` produced a class Tailwind never sees, so
+  // three accents drew a solid white ring and all eight hovers were dead
+  // (T-0120).
+  const borderClass = pillBorderMap[color];
+  // items-start, not items-center: a pill with a subtitle and one without sat
+  // on different baselines in the same row (T-0127).
+  // design-lint-disable-next-line no-inline-card-chrome -- the pill is a Link wearing its accent edge from pillBorderMap (T-0120); Card renders a container element with the hairline edge, so it can be neither the link nor the accent
+  const base = `rounded-ps-md border ${borderClass} bg-ps-surface-panel px-4 py-3 flex items-start gap-3 min-w-0`;
 
   const inner = (
     <>
-      <Icon className={`w-4 h-4 opacity-60 flex-shrink-0 ${textColor}`} />
+      <Icon className={`mt-0.5 w-4 h-4 opacity-60 flex-shrink-0 ${textColor}`} />
       <div className="min-w-0 flex-1">
-        <div className="text-xs font-mono text-ps-text-muted uppercase truncate">
+        <div className="text-micro font-mono text-ps-text-muted uppercase truncate">
           {label}
         </div>
-        <div className={`text-lg font-bold font-mono truncate ${textColor}`}>
+        <div className={`text-title font-bold font-mono truncate ${textColor}`}>
           {value}
         </div>
         {subtitle && (
-          <div className="text-xs font-mono text-ps-text-muted truncate">
+          <div className="text-micro font-mono text-ps-text-muted truncate">
             {subtitle}
           </div>
         )}
@@ -78,9 +85,9 @@ export function StatPill({
   );
 
   if (href) {
-    const hoverBorder = textColor.replace(/^text-/, "hover:border-") + "/45";
+    const hoverBorder = pillBorderHoverMap[color];
     return (
-      <Link href={href} className={`${base} ${hoverBorder} hover:bg-dark-900/70 transition-colors`}>
+      <Link href={href} className={`${base} ${hoverBorder} hover:bg-ps-surface-panel transition-colors`}>
         {inner}
       </Link>
     );
@@ -94,12 +101,12 @@ export function StatPill({
  */
 export function StatPillSkeleton() {
   return (
-    <div className="rounded-lg border border-white/10 bg-dark-900/30 px-4 py-3 flex items-center gap-3 animate-pulse">
-      <div className="w-4 h-4 rounded bg-white/10 flex-shrink-0" />
+    <Card padding="none" className="px-4 py-3 flex items-center gap-3 animate-pulse">
+      <div className="w-4 h-4 rounded-ps-sm bg-ps-surface-raised flex-shrink-0" />
       <div className="flex-1 space-y-2">
-        <div className="h-3 w-16 rounded bg-white/10" />
-        <div className="h-5 w-24 rounded bg-white/10" />
+        <div className="h-3 w-16 rounded-ps-sm bg-ps-surface-raised" />
+        <div className="h-5 w-24 rounded-ps-sm bg-ps-surface-raised" />
       </div>
-    </div>
+    </Card>
   );
 }

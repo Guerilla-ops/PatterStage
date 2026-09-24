@@ -2,8 +2,8 @@
 // ═══════════════════════════════════════════════════════════════
 // The tokens the first-build lock-in sitting ruled (T-0028, 2026-08-24).
 //
-// docs/LOCKBOOK.md's Tokens section names two homes for a design token, the
-// @theme block in src/app/globals.css and the code mirror in src/lib/theme.ts,
+// org/LOCKBOOK.md's Tokens section names two homes for a design token, the
+// @theme block in src/app/globals.css and the code mirror in src/lib/ui/theme.ts,
 // and states that the two must agree. Two homes and a promise is not a contract:
 // a class string in theme.ts naming a token nobody declared compiles, passes
 // eslint, renders nothing, and looks exactly like a working style. That is the
@@ -32,7 +32,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { MODULES, MODULE_ACCENTS } from "@/lib/modules/registry";
-import { measureClasses, surfaceClasses } from "@/lib/theme";
+import { edgeClasses, measureClasses, surfaceClasses } from "@/lib/ui/theme";
 
 const CSS = readFileSync(join(process.cwd(), "src/app/globals.css"), "utf-8");
 
@@ -48,7 +48,9 @@ function declaredTokens(): Map<string, string> {
 /** `bg-ps-surface-panel` -> `--color-ps-surface-panel`, per Tailwind's namespaces. */
 function tokenForClass(cls: string): string {
   const utility = cls.replace(/^(bg|border|text)-/, "");
-  if (utility.startsWith("ps-surface-")) return `--color-${utility}`;
+  if (utility.startsWith("ps-surface-") || utility.startsWith("ps-edge")) {
+    return `--color-${utility}`;
+  }
   const measure = cls.replace(/^(max-w|space-y)-/, "");
   if (cls.startsWith("space-y-")) return `--spacing-${measure}`;
   return `--container-${measure}`;
@@ -82,16 +84,58 @@ describe("the surface ladder", () => {
     }
   });
 
-  it("aliases the primitives the tree already paints, minting no new colour", () => {
-    // Three of the four roles are an alias, not a value: changing --color-dark-900
-    // must move the panel with it, or the semantic layer is a second source of
-    // truth rather than a name for the first.
-    expect(tokens.get("--color-ps-surface-ground")).toBe("var(--color-dark-950)");
-    expect(tokens.get("--color-ps-surface-panel")).toBe("var(--color-dark-900)");
-    expect(tokens.get("--color-ps-surface-well")).toBe("var(--color-dark-800)");
-    // The hairline is the exception, and it is recorded rather than invented:
-    // the tree draws its rules as border-white/10, which matches no dark-* rung.
-    expect(tokens.get("--color-ps-surface-hairline")).toBe("rgb(255 255 255 / 0.10)");
+  /**
+   * The rules are a separate ladder from the fills, on a cooler and far less
+   * saturated ray, because on the surface ray a 3:1 stroke comes out a blue
+   * line rather than an edge (T-0116). Same rule, same reason: two homes with
+   * nothing holding them together is how a mirror goes stale.
+   */
+  it("and gives every edge role one too", () => {
+    const roles = Object.values(edgeClasses);
+    expect(roles).toHaveLength(3);
+    for (const cls of roles) {
+      expect(tokens.has(tokenForClass(cls))).toBe(true);
+    }
+  });
+
+  /**
+   * Amended 2026-09-07 (T-0116), and the reason belongs here rather than in a
+   * commit message.
+   *
+   * This used to assert that all four roles alias a `--color-dark-*` primitive:
+   * that the semantic layer is a NAME for the appearance layer and not a second
+   * source of truth. That is a good rule and it is why the test was written. It
+   * is also the rule that kept the ladder flat, because the primitives it named
+   * span 1.19:1 against the ground, and a semantic layer that can only rename
+   * what is already there cannot fix a surface nobody can see.
+   *
+   * So the rule now applies to the roles that are still names, and the roles
+   * that became values are asserted AS values, by measurement, in
+   * u2-the-token-layer.test.ts. Nothing here is loosened: there are more
+   * assertions than before, not fewer.
+   */
+  /**
+   * `well` and `surface-hairline` were the last two rungs of the flat ladder,
+   * kept alive through U2 so that DECLARING the new one repainted nothing.
+   * U4 moved their call sites, so they are gone: `well` aliased dark-800,
+   * which is LIGHTER than the card it sat inside, so every input in the
+   * product read as a lift rather than a well; `surface-hairline` was white at
+   * 10%, which is the 1.25:1 rule this programme exists to remove.
+   */
+  it("no longer declares the two rungs of the flat ladder", () => {
+    expect(tokens.get("--color-ps-surface-well")).toBeUndefined();
+    expect(tokens.get("--color-ps-surface-hairline")).toBeUndefined();
+    // And what replaced them is declared, so this is a swap rather than a loss.
+    expect(tokens.get("--color-ps-surface-inset")).toBe("var(--color-ps-surface-ground)");
+    expect(tokens.get("--color-ps-edge-hairline")).toBe("#474f59");
+  });
+
+  it("and the roles that became values are hexes, not aliases of a flat ladder", () => {
+    // A `var()` here would mean the ladder is back to renaming dark-900, which
+    // is the state the walk measured at 1.06:1 against the page.
+    expect(tokens.get("--color-ps-surface-ground")).toMatch(/^#[0-9a-f]{6}$/i);
+    expect(tokens.get("--color-ps-surface-panel")).toMatch(/^#[0-9a-f]{6}$/i);
+    expect(tokens.get("--color-ps-surface-panel")).not.toBe(tokens.get("--color-dark-900"));
   });
 });
 
@@ -155,7 +199,7 @@ describe("the RGB mirror tokens are usable by the rules that consume them", () =
    * That is not theoretical. Until 2026-08-24 all six mirrors held comma lists,
    * so eighteen paint rules in this stylesheet rendered NOTHING: every
    * .text-glow-*, every .glow-* box-shadow, .scanlines and .grid-bg, plus
-   * GlowSurface through --glow-surface-rgb. docs/design-tokens.md reserves
+   * GlowSurface through --glow-surface-rgb. docs/contributing/design-tokens.md reserves
    * those for LIVE state and the lock-book's motif is "the only bright things
    * are live state", so the entire liveness signal was invisible and a running
    * session looked exactly like a finished one. Nothing failed, because a
@@ -176,7 +220,7 @@ describe("the RGB mirror tokens are usable by the rules that consume them", () =
   );
 
   it("keeps the code mirror in the same form, since it feeds the same syntax", async () => {
-    const theme = readFileSync(join(process.cwd(), "src/lib/theme.ts"), "utf-8");
+    const theme = readFileSync(join(process.cwd(), "src/lib/ui/theme.ts"), "utf-8");
     const block = theme.slice(theme.indexOf("const GLOW_RGBS"));
     const values = [...block.slice(0, block.indexOf("} as const;")).matchAll(/"([^"]+)"/g)];
     expect(values.length).toBeGreaterThan(0);

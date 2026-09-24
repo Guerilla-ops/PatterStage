@@ -35,12 +35,13 @@ import type { MissionGroup } from "@/lib/sessions/sessions-grouping";
 import type { LogFileMeta } from "@/lib/fs/log-files";
 import type { MissionsPageViewModel } from "@/hooks/useMissionsPage";
 import type { MissionRow } from "@/hooks/missions-page-types";
+import { missionsViewModel } from "../helpers/fixtures";
 
-// The detail panel opens an EventSource when a mission expands. These tests are
-// about which rows render and what the row's click does, not the stream.
-jest.mock("@/components/missions/MissionLiveProgress", () => ({
-  __esModule: true,
-  default: () => null,
+// The detail panel polls for a run and opens an EventSource when a mission
+// expands. These tests are about which rows render and what the row's click
+// does, not the stream, so the read hook answers nothing.
+jest.mock("@/hooks/useApiResource", () => ({
+  useApiResource: () => ({ data: undefined, error: null, settled: false, isLoading: false, refetch: jest.fn() }),
 }));
 
 const HOUR_AGO = new Date(Date.now() - 3_600_000).toISOString();
@@ -86,13 +87,13 @@ describe("SessionCard is a ledger row, not a rounded box", () => {
   it("still links to the transcript", () => {
     render(<SessionCard session={session({ id: "sess-42" })} />);
     const link = screen.getByRole("link", { name: /Triage the queue/ });
-    expect(link.getAttribute("href")).toBe("/sessions/sess-42");
+    expect(link.getAttribute("href")).toBe("/results/sessions/sess-42");
   });
 
   it("still links a mission-born session to its parent mission", () => {
     render(<SessionCard session={session({ missionId: "m-7" })} />);
     const badge = screen.getByTitle("Open parent mission");
-    expect(badge.getAttribute("href")).toBe("/orchestration/missions?mission=m-7");
+    expect(badge.getAttribute("href")).toBe("/work/missions?mission=m-7");
   });
 
   it("hides the size when the record has none, exactly as before", () => {
@@ -128,7 +129,7 @@ describe("MissionGroupCard keeps its grouping behaviour", () => {
   it("starts collapsed and shows the group's own facts", () => {
     render(<MissionGroupCard group={group()} />);
     expect(screen.getByText("Run one")).toBeInTheDocument();
-    expect(screen.getByText("2 sessions")).toBeInTheDocument();
+    expect(screen.getByText("2 on this page")).toBeInTheDocument();
     expect(screen.queryByText("Run two")).not.toBeInTheDocument();
   });
 
@@ -147,7 +148,7 @@ describe("MissionGroupCard keeps its grouping behaviour", () => {
     render(<MissionGroupCard group={group()} />);
     const link = screen.getByTitle("Open the parent mission");
     expect(link.getAttribute("href")).toBe(
-      "/orchestration/missions?mission=m-7abcdef012345",
+      "/work/missions?mission=m-7abcdef012345",
     );
   });
 
@@ -215,7 +216,7 @@ describe("the log terminal is a panel of ledger lines", () => {
   function terminal(lines: string[], searchTerm = "") {
     render(
       <LogTerminal
-        containerRef={{ current: null }}
+        scrollRef={{ current: null }}
         onScroll={() => {}}
         logName="agent"
         activeLog="agent"
@@ -223,6 +224,11 @@ describe("the log terminal is a panel of ledger lines", () => {
         totalLines={lines.length}
         lines={lines}
         searchTerm={searchTerm}
+        // The terminal's own bar since U19 (T-0133); not what this test reads.
+        autoRefresh={false}
+        onToggleAutoRefresh={() => {}}
+        lineCount={200}
+        onLineCountChange={() => {}}
       />,
     );
   }
@@ -297,40 +303,7 @@ describe("the missions board is a ledger per column", () => {
   ];
 
   function viewModel(over: Partial<MissionsPageViewModel> = {}) {
-    return {
-      missions,
-      showCreate: true,
-      filter: "all",
-      setFilter: jest.fn(),
-      search: "",
-      setSearch: jest.fn(),
-      expandedId: null,
-      setExpandedId: jest.fn(),
-      detail: null,
-      detailLoading: false,
-      promptCollapsed: true,
-      setPromptCollapsed: jest.fn(),
-      collapsedColumns: {},
-      setCollapsedColumns: jest.fn(),
-      categoryFilter: "all",
-      setCategoryFilter: jest.fn(),
-      missionCategoryFilter: "all",
-      setMissionCategoryFilter: jest.fn(),
-      templateCategoryPills: [],
-      missionCategoryPills: [],
-      filteredGrouped: [],
-      filtered: missions,
-      categories: [],
-      handleTemplateSelect: jest.fn(),
-      openTemplateManager: jest.fn(),
-      openCategoryManager: jest.fn(),
-      handleEdit: jest.fn(),
-      handleDelete: jest.fn(),
-      handleCancel: jest.fn(),
-      handleDuplicateMission: jest.fn(),
-      cancellingMissionId: null,
-      ...over,
-    } as unknown as MissionsPageViewModel;
+    return missionsViewModel(missions, { showCreate: true, missionCategoryPills: [], ...over });
   }
 
   it("still renders every mission, in its own column", () => {

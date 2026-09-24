@@ -1,19 +1,15 @@
 // ═══════════════════════════════════════════════════════════════
 // memory-providers/unavailable-provider.ts — active, but nothing here can serve it
 //
-// The registry used to return a Hindsight client for EVERY provider type,
-// because its `default:` branch was a hindsight alias. That made a provider
-// switch structurally unobservable, and a type nobody had implemented yet would
-// quietly talk to Hindsight's endpoint while claiming to be itself (T-0077).
-//
-// This is what the registry returns instead. It reports the type the DATABASE
-// says is active — not "none" — because that is the truth: the operator did
-// select holographic, and what is missing is a client, not a selection. Callers
-// asking "which provider is active" get the right answer; callers trying to USE
-// it get a refusal that names the type rather than a silent connection to
-// somebody else's backend.
+// The registry's `default:` branch was a hindsight alias, so a type nobody had
+// implemented quietly talked to Hindsight's endpoint while claiming to be
+// itself (T-0077). This is returned instead. It reports the type the DATABASE
+// says is active, not "none", because the operator did select it and what is
+// missing is a client: "which provider is active" gets the right answer, and
+// trying to USE it gets a refusal that names the type.
 // ═══════════════════════════════════════════════════════════════
 
+import { memoryUnavailableMessage } from "../memory-error-copy";
 import type {
   MemoryHealth,
   MemoryProvider,
@@ -29,10 +25,14 @@ export class UnavailableMemoryProvider implements MemoryProvider {
     this.type = type;
   }
 
+  /**
+   * The sentences live in @/lib/memory/memory-error-copy because three
+   * surfaces read them and the health banner has to recognise them: it renders
+   * INSIDE the provider card and used to reprint this as "Hindsight: <sentence>"
+   * over an install with no Hindsight in it.
+   */
   private reason(): string {
-    return this.type === "none"
-      ? "No memory provider is configured."
-      : `PatterStage has no client for the '${this.type}' memory provider.`;
+    return memoryUnavailableMessage(this.type);
   }
 
   bankBase(): string {
@@ -40,7 +40,8 @@ export class UnavailableMemoryProvider implements MemoryProvider {
   }
 
   async request<T = Record<string, unknown>>(): Promise<T> {
-    throw new Error(`${this.reason()} There is nothing to query.`);
+    // The message travels to the client as a toast, so this is user-facing copy.
+    throw new Error(this.reason());
   }
 
   async health(): Promise<MemoryHealth> {

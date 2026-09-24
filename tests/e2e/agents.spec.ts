@@ -12,8 +12,15 @@ import { test, expect, type Page } from "@playwright/test";
 const READY = { timeout: 30_000 } as const;
 
 async function openAgentsPage(page: Page) {
-  await page.goto("/operations/agents");
-  await expect(page.getByRole("heading", { name: "Agent Profiles" })).toBeVisible(READY);
+  await page.goto("/agent/profiles");
+  // The registry's word, which is also the rail entry (U11, T-0125).
+  await expect(page.getByRole("heading", { name: "Agents", exact: true })).toBeVisible(READY);
+  // And a control the CLIENT renders, because since U11 the heading is drawn
+  // before hydration and a click on New Profile in that window is a click on a
+  // button with no handler yet: the modal never opened, once, under a full
+  // worker pool (T-0128). Push all appears only after the profiles fetch has
+  // resolved, so once it is visible every button on the page is wired.
+  await expect(page.getByRole("button", { name: "Push all", exact: true })).toBeVisible(READY);
 }
 
 test.describe("Agents page", () => {
@@ -24,13 +31,18 @@ test.describe("Agents page", () => {
   test("profile sync controls are visible", async ({ page }) => {
     await openAgentsPage(page);
     // Exact names, because /Push all/i is ambiguous: ProfileSyncBar renders
-    // "Push all" always, and ProfilesDriftBanner renders "Push all to Hermes"
-    // whenever the database and the Hermes disk disagree. The loose regex made
-    // this test pass or fail on whether the run's data happened to have drifted
-    // (a strict-mode violation on a drifted DB, green on a clean one). The two
-    // sync-bar controls are what the test is about, so it names them.
-    await expect(page.getByRole("button", { name: "Push all", exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Pull all", exact: true })).toBeVisible();
+    // "Push all" always, and the drift banner (a local of AgentProfilesOverview)
+    // rendered "Push all to Hermes" whenever the database and the Hermes disk
+    // disagree. The loose regex made this test pass or fail on whether the
+    // run's data happened to have drifted (a strict-mode violation on a drifted
+    // DB, green on a clean one). The two sync-bar controls are what the test is
+    // about, so it names them.
+    // READY here too, since U11 (T-0125): the header renders while the body is
+    // still loading, so the heading above no longer means the profiles have
+    // arrived, and the default 5s ran out twice under a full worker pool while
+    // this passed alone. Nothing checked here changed; only the patience.
+    await expect(page.getByRole("button", { name: "Push all", exact: true })).toBeVisible(READY);
+    await expect(page.getByRole("button", { name: "Pull all", exact: true })).toBeVisible(READY);
   });
 
   test("New Profile button is visible", async ({ page }) => {

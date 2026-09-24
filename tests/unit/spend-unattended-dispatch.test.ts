@@ -36,11 +36,11 @@ const dispatchMissionNow = jest.fn();
 const listActiveComposerRuns = jest.fn();
 const isFeatureEnabled = jest.fn();
 
-jest.mock("@/lib/schedules-repository", () => ({
+jest.mock("@/lib/schedule/schedules-repository", () => ({
   getDueSchedules: (...a: unknown[]) => getDueSchedules(...a),
   advanceSchedule: (...a: unknown[]) => advanceSchedule(...a),
 }));
-jest.mock("@/lib/runs-repository", () => ({ createRun: (...a: unknown[]) => createRun(...a) }));
+jest.mock("@/lib/runs/runs-repository", () => ({ createRun: (...a: unknown[]) => createRun(...a) }));
 jest.mock("@/lib/missions/mission-repository", () => ({
   hasDispatchedMission: (...a: unknown[]) => hasDispatchedMission(...a),
   getNextQueuedMission: (...a: unknown[]) => getNextQueuedMission(...a),
@@ -51,7 +51,7 @@ jest.mock("@/lib/orchestration/dispatch", () => ({
 jest.mock("@/lib/missions/mission-dispatch", () => ({
   dispatchMissionNow: (...a: unknown[]) => dispatchMissionNow(...a),
 }));
-jest.mock("@/lib/api-logger", () => ({ logApiError: jest.fn() }));
+jest.mock("@/lib/api/api-logger", () => ({ logApiError: jest.fn() }));
 
 // ── composer tick collaborators ───────────────────────────────
 jest.mock("@/lib/feature-flags", () => ({ isFeatureEnabled: (...a: unknown[]) => isFeatureEnabled(...a) }));
@@ -71,7 +71,7 @@ jest.mock("@/lib/composer/composer-repository", () => ({
   updateNodeRun: jest.fn(),
 }));
 jest.mock("@/lib/composer/dispatch", () => ({ dispatchComposerNode: jest.fn() }));
-jest.mock("@/lib/artifacts-repository", () => ({ captureArtifactOnce: jest.fn() }));
+jest.mock("@/lib/runs/artifacts-repository", () => ({ captureArtifactOnce: jest.fn() }));
 jest.mock("@/lib/laboratory/deep-research/research-repository", () => ({
   getResearchRunByComposerNodeRunId: jest.fn(),
 }));
@@ -175,9 +175,10 @@ describe("clause 5: attended dispatch cannot reach the gate", () => {
     // caller routes through.
     "src/lib/orchestration/dispatch.ts",
     "src/lib/missions/mission-dispatch.ts",
-    // The routes behind the buttons: dispatch, run-now, run-this-schedule-now,
-    // approve-this-Composer-gate, start-a-Deep-Research-run.
-    "src/app/api/missions/[id]/dispatch/route.ts",
+    // The routes behind the buttons: run-now, run-this-schedule-now,
+    // approve-this-Composer-gate, start-a-Deep-Research-run. (The per-mission
+    // dispatch route had no caller and went in T-0129; the action envelope on
+    // POST /api/missions is what the button posts, through dispatch.ts above.)
     "src/app/api/missions/[id]/run/route.ts",
     "src/app/api/schedules/[id]/run/route.ts",
     "src/app/api/composer/runs/[id]/nodes/[nodeId]/approve/route.ts",

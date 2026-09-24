@@ -24,34 +24,28 @@
  * is compared against.
  */
 
-import { join } from "path";
+import { openRealDb, type RealDb } from "../helpers/baseline-db";
 
-import type DatabaseNs from "better-sqlite3";
-
-type RealDb = DatabaseNs.Database;
 let testDb: RealDb | null = null;
 
-jest.mock("@/lib/db", () => ({
-  getDb: () => testDb!,
-  ensureDb: () => undefined,
-  now: () => new Date().toISOString(),
-  uuid: () => `id-${Math.random().toString(36).slice(2)}`,
-  inTransaction: <T,>(fn: () => T) => testDb!.transaction(fn)(),
-}));
-
-const Database = jest.requireActual(
-  join(process.cwd(), "node_modules", "better-sqlite3", "lib", "index.js"),
-) as unknown as new (path: string) => RealDb;
+// eslint-disable-next-line @typescript-eslint/no-require-imports -- jest.mock factories are hoisted above imports; require is the hoisting-safe form
+jest.mock("@/lib/db", () => require("../helpers/baseline-db").dbSingletonMock(() => testDb));
 
 import { readRunUsageSince } from "@/lib/spend/spend-repository";
 
 beforeAll(() => {
-  testDb = new Database(":memory:");
+  testDb = openRealDb();
   testDb.exec(`
     CREATE TABLE runs (
       id TEXT PRIMARY KEY, mission_id TEXT, composer_node_run_id TEXT,
       status TEXT, output TEXT, usage_json TEXT, error TEXT, session_id TEXT,
-      submitted_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      submitted_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+      -- Added by migration 040 (T-0108). This hand-written fixture is the
+      -- schema the read walks, so it carries the column with the same default
+      -- the migration gives existing rows; the composer CASE fallback below is
+      -- what these cases are actually about, and it still classifies rows that
+      -- predate the column.
+      story_id TEXT, spend_source TEXT NOT NULL DEFAULT 'agent'
     );
     CREATE TABLE missions (id TEXT PRIMARY KEY, model_id TEXT);
   `);
@@ -115,7 +109,7 @@ describe("the reconciler carries a stage's usage onto its run", () => {
       usage: { inputTokens: 800, outputTokens: 400, totalTokens: 1200 },
     }));
 
-    jest.doMock("@/lib/runs-repository", () => ({ listActiveRuns, updateRun }));
+    jest.doMock("@/lib/runs/runs-repository", () => ({ listActiveRuns, updateRun }));
     jest.doMock("@/lib/runtime", () => ({ runtime: { getRun, stopRun: jest.fn() } }));
     jest.doMock("@/lib/composer/engine", () => ({
       finalizeComposerNodeRun: jest.fn(() => null),
@@ -127,8 +121,8 @@ describe("the reconciler carries a stage's usage onto its run", () => {
     }));
     jest.doMock("@/lib/sessions/session-repository", () => ({ closeSessionForMission: jest.fn() }));
     jest.doMock("@/lib/analytics/record-event", () => ({ recordEvent: jest.fn() }));
-    jest.doMock("@/lib/artifacts-repository", () => ({ captureArtifactOnce: jest.fn() }));
-    jest.doMock("@/lib/api-logger", () => ({ logApiError: jest.fn() }));
+    jest.doMock("@/lib/runs/artifacts-repository", () => ({ captureArtifactOnce: jest.fn() }));
+    jest.doMock("@/lib/api/api-logger", () => ({ logApiError: jest.fn() }));
 
     const { reconcileActiveRuns } = await import("@/lib/orchestration/run-reconcile");
     await reconcileActiveRuns();
@@ -147,7 +141,7 @@ describe("the reconciler carries a stage's usage onto its run", () => {
     jest.resetModules();
 
     const updateRun = jest.fn();
-    jest.doMock("@/lib/runs-repository", () => ({
+    jest.doMock("@/lib/runs/runs-repository", () => ({
       updateRun,
       listActiveRuns: jest.fn(() => [
         {
@@ -178,8 +172,8 @@ describe("the reconciler carries a stage's usage onto its run", () => {
     }));
     jest.doMock("@/lib/sessions/session-repository", () => ({ closeSessionForMission: jest.fn() }));
     jest.doMock("@/lib/analytics/record-event", () => ({ recordEvent: jest.fn() }));
-    jest.doMock("@/lib/artifacts-repository", () => ({ captureArtifactOnce: jest.fn() }));
-    jest.doMock("@/lib/api-logger", () => ({ logApiError: jest.fn() }));
+    jest.doMock("@/lib/runs/artifacts-repository", () => ({ captureArtifactOnce: jest.fn() }));
+    jest.doMock("@/lib/api/api-logger", () => ({ logApiError: jest.fn() }));
 
     const { reconcileActiveRuns } = await import("@/lib/orchestration/run-reconcile");
     await reconcileActiveRuns();
@@ -202,7 +196,7 @@ describe("the reconciler carries a stage's usage onto its run", () => {
     jest.resetModules();
 
     const updateRun = jest.fn();
-    jest.doMock("@/lib/runs-repository", () => ({
+    jest.doMock("@/lib/runs/runs-repository", () => ({
       updateRun,
       listActiveRuns: jest.fn(() => [
         {
@@ -229,8 +223,8 @@ describe("the reconciler carries a stage's usage onto its run", () => {
     }));
     jest.doMock("@/lib/sessions/session-repository", () => ({ closeSessionForMission: jest.fn() }));
     jest.doMock("@/lib/analytics/record-event", () => ({ recordEvent: jest.fn() }));
-    jest.doMock("@/lib/artifacts-repository", () => ({ captureArtifactOnce: jest.fn() }));
-    jest.doMock("@/lib/api-logger", () => ({ logApiError: jest.fn() }));
+    jest.doMock("@/lib/runs/artifacts-repository", () => ({ captureArtifactOnce: jest.fn() }));
+    jest.doMock("@/lib/api/api-logger", () => ({ logApiError: jest.fn() }));
 
     const { reconcileActiveRuns } = await import("@/lib/orchestration/run-reconcile");
     await reconcileActiveRuns();

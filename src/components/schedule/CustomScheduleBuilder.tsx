@@ -11,7 +11,9 @@
 
 import { useState } from "react";
 import { X } from "lucide-react";
-import { baseInputStyles } from "@/lib/theme";
+import Button from "@/components/ui/Button";
+import Card from "@/components/ui/Card";
+import { Input, Select } from "@/components/ui/field";
 import { allDays, DOW_LABELS, type DayOfWeek } from "@/lib/schedule/presets";
 import { previewCron } from "@/lib/schedule/picker-resolver";
 
@@ -26,6 +28,21 @@ export interface CustomScheduleBuilderProps {
   onClose: () => void;
 }
 
+const FREQUENCY_OPTIONS = [
+  { value: "1", label: "Every 1 minute" },
+  { value: "5", label: "Every 5 minutes" },
+  { value: "10", label: "Every 10 minutes" },
+  { value: "15", label: "Every 15 minutes" },
+  { value: "20", label: "Every 20 minutes" },
+  { value: "30", label: "Every 30 minutes" },
+  { value: "60", label: "Every 1 hour" },
+  { value: "120", label: "Every 2 hours" },
+  { value: "180", label: "Every 3 hours" },
+  { value: "360", label: "Every 6 hours" },
+  { value: "720", label: "Every 12 hours" },
+  { value: "1440", label: "Every 1 day" },
+];
+
 export function CustomScheduleBuilder({
   customTime,
   setCustomTime,
@@ -39,9 +56,9 @@ export function CustomScheduleBuilder({
   const [customFrequency, setCustomFrequency] = useState<string>("60");
 
   return (
-    <div className="rounded-lg border border-white/10 bg-dark-800/50 p-3 space-y-3">
+    <Card variant="raised" padding="sm" className="space-y-3">
       <div className="flex items-center justify-between">
-        <span className="text-xs font-medium text-ps-text-secondary">Custom schedule</span>
+        <span className="text-body font-medium text-ps-text-secondary">Custom schedule</span>
         <button
           type="button"
           onClick={onClose}
@@ -54,45 +71,34 @@ export function CustomScheduleBuilder({
 
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="text-xs text-ps-text-muted font-mono block mb-1">
+          <label className="text-micro text-ps-text-muted font-mono block mb-1">
             Frequency
           </label>
-          <select aria-label="Frequency"
+          <Select
+            ariaLabel="Frequency"
             value={customFrequency}
-            onChange={(e) => setCustomFrequency(e.target.value)}
+            onChange={setCustomFrequency}
             disabled={disabled}
-            className={baseInputStyles}
-          >
-            <option value="1">Every 1 minute</option>
-            <option value="5">Every 5 minutes</option>
-            <option value="10">Every 10 minutes</option>
-            <option value="15">Every 15 minutes</option>
-            <option value="20">Every 20 minutes</option>
-            <option value="30">Every 30 minutes</option>
-            <option value="60">Every 1 hour</option>
-            <option value="120">Every 2 hours</option>
-            <option value="180">Every 3 hours</option>
-            <option value="360">Every 6 hours</option>
-            <option value="720">Every 12 hours</option>
-            <option value="1440">Every 1 day</option>
-          </select>
+            options={FREQUENCY_OPTIONS}
+          />
         </div>
         <div>
-          <label className="text-xs text-ps-text-muted font-mono block mb-1">
+          <label className="text-micro text-ps-text-muted font-mono block mb-1">
             Time of day
           </label>
-          <input aria-label="Time of day"
+          <Input
+            aria-label="Time of day"
             type="time"
             value={customTime}
             onChange={(e) => setCustomTime(e.target.value)}
             disabled={disabled}
-            className={baseInputStyles}
+            className="font-mono"
           />
         </div>
       </div>
 
       <div>
-        <label className="text-xs text-ps-text-muted font-mono block mb-1.5">
+        <label className="text-micro text-ps-text-muted font-mono block mb-1.5">
           Days of week
         </label>
         <div className="flex gap-1.5 flex-wrap">
@@ -106,10 +112,10 @@ export function CustomScheduleBuilder({
                 disabled={disabled}
                 onClick={() => toggleDay(d)}
                 aria-pressed={checked}
-                className={`px-2.5 py-1 rounded-md text-xs font-mono transition-colors ${
+                className={`px-2.5 py-1 rounded-ps-md text-micro font-mono transition-colors ${
                   checked
                     ? "bg-neon-orange/20 text-neon-orange border border-neon-orange/40"
-                    : "bg-white/5 text-ps-text-muted border border-white/10 hover:text-ps-text-secondary"
+                    : "bg-ps-surface-raised text-ps-text-muted border border-ps-edge hover:text-ps-text-secondary"
                 } disabled:opacity-50 disabled:cursor-not-allowed`}
               >
                 {label}
@@ -122,7 +128,7 @@ export function CustomScheduleBuilder({
             type="button"
             onClick={() => setCustomDays(allDays())}
             disabled={disabled}
-            className="text-xs text-ps-text-muted hover:text-ps-text-secondary font-mono"
+            className="text-micro text-ps-text-muted hover:text-ps-text-secondary font-mono"
           >
             All days
           </button>
@@ -130,7 +136,7 @@ export function CustomScheduleBuilder({
             type="button"
             onClick={() => setCustomDays(new Set([1, 2, 3, 4, 5]))}
             disabled={disabled}
-            className="text-xs text-ps-text-muted hover:text-ps-text-secondary font-mono"
+            className="text-micro text-ps-text-muted hover:text-ps-text-secondary font-mono"
           >
             Weekdays
           </button>
@@ -138,7 +144,7 @@ export function CustomScheduleBuilder({
             type="button"
             onClick={() => setCustomDays(new Set())}
             disabled={disabled}
-            className="text-xs text-ps-text-muted hover:text-ps-text-secondary font-mono"
+            className="text-micro text-ps-text-muted hover:text-ps-text-secondary font-mono"
           >
             Clear
           </button>
@@ -146,18 +152,13 @@ export function CustomScheduleBuilder({
       </div>
 
       <div className="flex items-center justify-between gap-2 pt-1">
-        <div className="text-xs text-ps-text-muted font-mono">
+        <div className="text-micro text-ps-text-muted font-mono">
           Preview: <code className="text-neon-orange">{previewCron(customTime, customDays)}</code>
         </div>
-        <button
-          type="button"
-          onClick={onApply}
-          disabled={disabled}
-          className="px-3 py-1.5 rounded-md bg-neon-orange/20 text-neon-orange border border-neon-orange/40 text-xs font-mono hover:bg-neon-orange/30 disabled:opacity-50"
-        >
+        <Button variant="primary" color="orange" size="sm" onClick={onApply} disabled={disabled}>
           Apply
-        </button>
+        </Button>
       </div>
-    </div>
+    </Card>
   );
 }

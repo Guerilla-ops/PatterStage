@@ -12,19 +12,20 @@
 "use client";
 
 import { useMemo, useState, useCallback } from "react";
-import Link from "next/link";
+import LinkButton from "@/components/ui/LinkButton";
 import { useRouter } from "next/navigation";
 import { Rocket, ChevronRight, ChevronDown } from "lucide-react";
 
 import CategoryAccordion from "@/components/ui/CategoryAccordion";
 import TemplatePill from "@/components/ui/TemplatePill";
+import { Panel } from "@/components/dashboard/Panel";
 import {
   groupTemplatesByCategory,
   type TemplateLike,
 } from "@/lib/missions/mission-categories";
 import type { MissionCategory } from "@/lib/missions/mission-category-repository";
-import type { DashboardTemplate } from "@/lib/dashboard/dashboard-initial-load";
-import { topNTemplates } from "@/lib/dashboard/dashboard-top-templates";
+import type { DashboardTemplate } from "@/hooks/useDashboard";
+import { DASHBOARD_STRIP_CAP, topNTemplates } from "@/lib/dashboard/dashboard-top-templates";
 import type { AccentColor } from "@/types/console";
 
 /**
@@ -34,7 +35,7 @@ import type { AccentColor } from "@/types/console";
  * seam. Exported because it is the thing the unit test asserts.
  */
 export function composeTemplateUrl(templateId: string): string {
-  return `/orchestration/missions?template=${templateId}&compose=1`;
+  return `/work/missions?template=${templateId}&compose=1`;
 }
 
 export interface DispatchStripProps {
@@ -62,33 +63,30 @@ export default function DispatchStrip({ templates, categories }: DispatchStripPr
   );
 
   return (
-    <div className="rounded-xl border border-neon-cyan/20 bg-dark-900/50 overflow-hidden">
+    <Panel accent="cyan">
       <button
         onClick={toggle}
-        className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-white/[0.02] transition-colors"
+        className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-ps-surface-raised transition-colors"
       >
         <div className="flex items-center gap-2">
           <Rocket className="w-4 h-4 text-neon-cyan" />
-          <span className="text-sm font-mono text-ps-text-primary">Launch a Mission</span>
+          <span className="text-body font-mono text-ps-text-primary">Launch a Mission</span>
           <span
-            className="text-xs font-mono text-ps-text-faint"
+            className="text-micro font-mono text-ps-text-faint"
             title="Mission templates you can launch from here — not a count of active missions"
           >
             · {templates.length} templates
           </span>
         </div>
         <div className="flex items-center gap-2">
-          <Link
-            href="/orchestration/missions"
-            onClick={(e) => e.stopPropagation()}
-            className="text-xs font-mono text-neon-cyan hover:underline flex items-center gap-1"
-          >
-            full control <ChevronRight className="w-3 h-3" />
-          </Link>
+          <LinkButton href="/work/missions" variant="ghost" color="cyan" size="sm" onClick={(e) => e.stopPropagation()}>
+            full control
+            <ChevronRight className="h-3 w-3" aria-hidden="true" />
+          </LinkButton>
           {expanded ? (
-            <ChevronDown className="w-4 h-4 text-white/20" />
+            <ChevronDown className="w-4 h-4 text-ps-viz-glyph-idle" />
           ) : (
-            <ChevronRight className="w-4 h-4 text-white/20" />
+            <ChevronRight className="w-4 h-4 text-ps-viz-glyph-idle" />
           )}
         </div>
       </button>
@@ -99,12 +97,12 @@ export default function DispatchStrip({ templates, categories }: DispatchStripPr
           {collapsedStrip.map((t) => (
             <TemplatePill key={t.id} t={t} onSelect={() => select(t.id)} />
           ))}
-          {templates.length > 12 && (
+          {templates.length > DASHBOARD_STRIP_CAP && (
             <button
               onClick={open}
-              className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-mono text-ps-text-muted hover:text-neon-cyan transition-colors"
+              className="inline-flex items-center gap-1 px-2 py-1.5 rounded-ps-md text-micro font-mono text-ps-text-muted hover:text-neon-cyan transition-colors"
             >
-              +{templates.length - 12} more
+              +{templates.length - DASHBOARD_STRIP_CAP} more
             </button>
           )}
         </div>
@@ -131,6 +129,6 @@ export default function DispatchStrip({ templates, categories }: DispatchStripPr
           ))}
         </div>
       )}
-    </div>
+    </Panel>
   );
 }

@@ -3,10 +3,9 @@ import type { NextRequest } from "next/server";
 // /api/tools — Hermes toolset catalog (read-only reference)
 // ═══════════════════════════════════════════════════════════════
 // Runtime tool access is configured per profile via platform_toolsets
-// (Operations → Tools). This route does not control Hermes runtime.
+// (Agent → Tools). This route does not control Hermes runtime.
 
-import { requireNotReadOnly } from "@/lib/api-auth";
-import { methodNotAllowed, ok } from "@/lib/api-response";
+import { methodNotAllowed, ok } from "@/lib/api/api-response";
 import {
   HERMES_CONFIGURABLE_TOOLSETS,
   HERMES_PLATFORMS,
@@ -31,10 +30,6 @@ export async function GET() {
 }
 
 export async function POST(_request: NextRequest) {
-  const ro = requireNotReadOnly("tool mutations are disabled");
-  if (ro) return ro;
-
   return methodNotAllowed(
-    "Tool registry mutations are disabled. Configure Hermes runtime toolsets on Operations → Tools (profile-scoped platform_toolsets).",
-  );
+    "Tool registry mutations are disabled. Configure Hermes runtime toolsets on Agent → Tools (profile-scoped platform_toolsets).", ["GET"]);
 }

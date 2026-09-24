@@ -1,9 +1,8 @@
 // ═══════════════════════════════════════════════════════════════
 // AgentFileEditor — the preview/edit card for one behaviour file
 //
-// Extracted verbatim from app/operations/agents/page.tsx. The editor
-// buffer, the save call and the save-status timer stay on the page;
-// this renders the card and calls back. Presentation only.
+// The editor buffer, the save call and the save-status timer stay on the
+// page; this renders the card and calls back. Presentation only.
 // ═══════════════════════════════════════════════════════════════
 
 "use client";
@@ -11,6 +10,7 @@
 import { AlertCircle, Check, Eye, EyeOff, RotateCcw, Save } from "lucide-react";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
+import { Textarea } from "@/components/ui/field";
 
 /** The file currently open in the editor, and the buffer being edited. */
 export interface EditorState {
@@ -49,10 +49,10 @@ export default function AgentFileEditor({
   onClose,
 }: AgentFileEditorProps) {
   return (
-    <div className="border-t border-white/10 p-4 flex flex-col gap-3 max-h-[50vh]">
+    <div className="border-t border-ps-edge-hairline p-4 flex flex-col gap-3 max-h-[50vh]">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
-          <span className="font-mono text-sm text-white">{editor.fileName}</span>
+          <span className="font-mono text-body text-ps-text-primary">{editor.fileName}</span>
           {hasChanges && <Badge color="orange" size="sm">Unsaved</Badge>}
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -95,14 +95,15 @@ export default function AgentFileEditor({
         </div>
       </div>
       {previewMode ? (
-        <pre className="whitespace-pre-wrap text-sm text-ps-text-primary font-mono bg-dark-800 rounded-lg p-4 overflow-auto max-h-64">
+        <pre className="whitespace-pre-wrap text-body text-ps-text-primary font-mono bg-ps-surface-inset rounded-ps-md p-4 overflow-auto max-h-64">
           {editor.content}
         </pre>
       ) : (
-        <textarea aria-label="File content"
+        <Textarea
+          aria-label="File content"
           value={editor.content}
           onChange={(e) => onContentChange(e.target.value)}
-          className="w-full min-h-[200px] max-h-64 bg-dark-800 border border-white/10 rounded-lg p-4 text-sm text-ps-text-primary font-mono resize-y focus:border-purple-500/50 focus:outline-none"
+          className="min-h-[200px] max-h-64"
           spellCheck={false}
         />
       )}

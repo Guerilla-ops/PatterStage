@@ -33,11 +33,11 @@ jest.mock("@/lib/sync", () => ({
   runFullSync: jest.fn(),
 }));
 
-jest.mock("@/lib/skills-repository", () => ({
+jest.mock("@/lib/skills/skills-repository", () => ({
   countSkills: jest.fn(() => 0),
 }));
 
-jest.mock("@/lib/system-repository", () => ({
+jest.mock("@/lib/system/system-repository", () => ({
   getSystemStat: jest.fn(() => null),
   getSystemStatNumber: jest.fn(() => 0),
   getMultipleStats: jest.fn(() => ({})),
@@ -67,25 +67,22 @@ jest.mock("@/modules/hermes/lib/agent-runtime", () => ({
   })),
 }));
 
-jest.mock("@/lib/paths", () => ({
-  PS_DATA_DIR: "/tmp/ch-data",
+// eslint-disable-next-line @typescript-eslint/no-require-imports -- jest.mock factories are hoisted above imports
+jest.mock("@/lib/host/paths", () => require("../helpers/mocks").pathsMock({
   getPsDataDir: () => "/tmp/ch-data",
-  PATHS: {
-    patterStageDb: "/tmp/ch-data/control-hub.db",
-    missions: "/tmp/ch-data/missions",
-    templates: "/tmp/ch-data/templates",
-    stories: "/tmp/ch-data/stories",
-    recroom: "/tmp/ch-data/recroom",
-    workspaces: "/tmp/ch-data/workspaces",
-    auditLog: "/tmp/ch-data/audit",
-    psScripts: "/tmp/ch-data/scripts",
-    psHardwareLogs: "/tmp/ch-data/logs",
+  // The real reader, not a stub: GET /api/sessions now consults PS_READ_ONLY
+  // before it syncs (T-0095, D124), and a paths mock without readEnv turned
+  // that read into a 500 that had nothing to do with sessions.
+  readEnv: (...keys: string[]) => {
+    for (const k of keys) {
+      const v = process.env[k];
+      if (v && String(v).trim()) return String(v).trim();
+    }
+    return undefined;
   },
-  getPsScriptsDir: () => "/tmp/ch-data/scripts",
-  getPsHardwareLogDir: () => "/tmp/ch-data/logs",
 }));
 
-jest.mock("@/lib/api-logger", () => ({
+jest.mock("@/lib/api/api-logger", () => ({
   logApiError: jest.fn(),
   // The monitor route's catch block calls `serverErrorFromCatch(...)` and
   // expects a NextResponse to be returned. The mock must mirror that
@@ -122,7 +119,7 @@ describe("GET /api/status", () => {
   beforeEach(() => jest.clearAllMocks());
 
   it("returns system status", async () => {
-    const { getSystemStat } = await import("@/lib/system-repository");
+    const { getSystemStat } = await import("@/lib/system/system-repository");
     (getSystemStat as jest.Mock).mockImplementation((key: string) => {
       if (key === "config.soul_present") return "true";
       if (key === "config.present") return "true";
@@ -136,7 +133,7 @@ describe("GET /api/status", () => {
     // real install while this suite proved the plumbing worked -- the
     // vacuous-sweep class T-0075 named. The counts are measured now (T-0081),
     // so the mocks moved to the repositories the route actually asks.
-    const { countSkills } = await import("@/lib/skills-repository");
+    const { countSkills } = await import("@/lib/skills/skills-repository");
     (countSkills as jest.Mock).mockReturnValueOnce(12);
     const { listSessions } = await import("@/lib/sessions/session-repository");
     // Once, not permanently: jest.clearAllMocks() clears calls but keeps

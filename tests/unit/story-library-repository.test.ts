@@ -10,15 +10,11 @@
 
 import { join } from "path";
 import { execBaselineSchema } from "../helpers/baseline-db";
-import { applyRecroomLibraryMigration } from "@/lib/db/apply-recroom-library-migration";
+import { applyRecroomLibraryMigration } from "@/lib/db/sql-migrations";
 
 let testDb: import("better-sqlite3").Database | null = null;
 
-jest.mock("@/lib/db", () => ({
-  getDb: () => testDb!,
-  now: () => new Date().toISOString(),
-  ensureDb: () => undefined,
-}));
+jest.mock("@/lib/db", () => require("../helpers/baseline-db").dbSingletonMock(() => testDb));
 
 import {
   createCharacter,

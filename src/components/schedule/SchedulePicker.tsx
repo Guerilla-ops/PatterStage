@@ -9,7 +9,8 @@
 
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { ChevronDown, Clock, AlertCircle, Calendar } from "lucide-react";
-import { baseInputStyles } from "@/lib/theme";
+import Card from "@/components/ui/Card";
+import { baseInputStyles } from "@/lib/ui/theme";
 import { parseSchedule } from "@/lib/schedule/parse-schedule";
 import { computeNextRun } from "@/lib/schedule/next-run";
 import { describeSchedule } from "@/lib/schedule/types";
@@ -266,11 +267,11 @@ export default function SchedulePicker({
           <ChevronDown className={`w-4 h-4 text-ps-text-muted transition-transform ${dropdownOpen ? "rotate-180" : ""}`} />
         </button>
         {dropdownOpen && (
-          <div className="absolute z-50 mt-1 w-full bg-dark-900 border border-white/10 rounded-xl shadow-2xl overflow-hidden">
+          <Card padding="none" className="absolute z-dropdown mt-1 w-full shadow-2xl overflow-hidden">
             <div className="max-h-72 overflow-y-auto py-1">
               {groups.map(({ group, items }) => (
                 <div key={group}>
-                  <div className="px-3 py-1.5 text-xs uppercase tracking-wider text-ps-text-muted font-mono">
+                  <div className="px-3 py-1.5 text-micro uppercase tracking-wider text-ps-text-muted font-mono">
                     {group}
                   </div>
                   {items.map((p) => (
@@ -278,10 +279,10 @@ export default function SchedulePicker({
                       key={p.id}
                       type="button"
                       onClick={() => handlePresetSelect(p)}
-                      className={`w-full text-left px-3 py-2 text-sm transition-colors ${
+                      className={`w-full text-left px-3 py-2 text-body transition-colors ${
                         matchedPreset?.id === p.id
                           ? "bg-neon-orange/15 text-neon-orange"
-                          : "text-ps-text-secondary hover:bg-white/5 hover:text-white"
+                          : "text-ps-text-secondary hover:bg-ps-surface-raised hover:text-ps-text-primary"
                       }`}
                     >
                       {p.label}
@@ -290,13 +291,13 @@ export default function SchedulePicker({
                 </div>
               ))}
             </div>
-          </div>
+          </Card>
         )}
         {error && (
-          <div className="flex items-center gap-2 text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2 mt-1.5">
+          <p className="flex items-center gap-2 text-body text-semantic-danger mt-1.5">
             <AlertCircle className="w-4 h-4 flex-shrink-0" />
             {error}
-          </div>
+          </p>
         )}
       </div>
     );
@@ -304,7 +305,7 @@ export default function SchedulePicker({
 
   return (
     <div className="space-y-1.5">
-      <label className="text-sm font-medium text-ps-text-secondary">
+      <label className="text-body font-medium text-ps-text-secondary">
         Schedule
       </label>
 
@@ -325,11 +326,11 @@ export default function SchedulePicker({
         </button>
 
         {dropdownOpen && (
-          <div className="absolute z-50 mt-1 w-full bg-dark-900 border border-white/10 rounded-xl shadow-2xl overflow-hidden">
+          <Card padding="none" className="absolute z-dropdown mt-1 w-full shadow-2xl overflow-hidden">
             <div className="max-h-72 overflow-y-auto py-1">
               {groups.map(({ group, items }) => (
                 <div key={group}>
-                  <div className="px-3 py-1.5 text-xs uppercase tracking-wider text-ps-text-muted font-mono sticky top-0 bg-dark-900">
+                  <div className="px-3 py-1.5 text-micro uppercase tracking-wider text-ps-text-muted font-mono sticky top-0 bg-ps-surface-panel">
                     {group}
                   </div>
                   {items.map((p) => (
@@ -337,10 +338,10 @@ export default function SchedulePicker({
                       key={p.id}
                       type="button"
                       onClick={() => handlePresetSelect(p)}
-                      className={`w-full text-left px-3 py-2 text-sm transition-colors ${
+                      className={`w-full text-left px-3 py-2 text-body transition-colors ${
                         matchedPreset?.id === p.id
                           ? "bg-neon-orange/15 text-neon-orange"
-                          : "text-ps-text-secondary hover:bg-white/5 hover:text-white"
+                          : "text-ps-text-secondary hover:bg-ps-surface-raised hover:text-ps-text-primary"
                       }`}
                     >
                       {p.label}
@@ -349,18 +350,18 @@ export default function SchedulePicker({
                 </div>
               ))}
               {/* Custom option at the bottom */}
-              <div className="border-t border-white/5 mt-1 pt-1">
+              <div className="border-t border-ps-edge-hairline mt-1 pt-1">
                 <button
                   type="button"
                   onClick={() => { setShowCustom((v) => !v); setDropdownOpen(false); }}
-                  className="w-full text-left px-3 py-2 text-sm text-neon-cyan hover:bg-white/5 transition-colors flex items-center gap-2"
+                  className="w-full text-left px-3 py-2 text-body text-neon-cyan hover:bg-ps-surface-raised transition-colors flex items-center gap-2"
                 >
                   <Calendar className="w-3.5 h-3.5" />
                   Custom…
                 </button>
               </div>
             </div>
-          </div>
+          </Card>
         )}
       </div>
 
@@ -380,17 +381,17 @@ export default function SchedulePicker({
 
       {/* Read-only canonical cron display + next-run preview */}
       {canonicalCron && (
-        <div className="rounded-lg bg-dark-800/50 border border-white/5 px-3 py-1.5 space-y-1">
+        <Card variant="raised" padding="none" className="px-3 py-1.5 space-y-1">
           <div className="flex items-center gap-2">
-            <span className="text-xs text-ps-text-muted font-mono shrink-0">Cron:</span>
-            <code className="text-xs font-mono text-neon-orange truncate">{canonicalCron}</code>
+            <span className="text-micro text-ps-text-muted font-mono shrink-0">Cron:</span>
+            <code className="text-micro font-mono text-neon-orange truncate">{canonicalCron}</code>
           </div>
           {nextRuns.length > 0 && (
             <div className="flex items-start gap-2">
-              <span className="text-xs text-ps-text-muted font-mono shrink-0 mt-px">Next:</span>
+              <span className="text-micro text-ps-text-muted font-mono shrink-0 mt-px">Next:</span>
               <div className="flex flex-wrap gap-x-3 gap-y-0.5">
                 {nextRuns.map((d, i) => (
-                  <span key={i} className="text-xs font-mono text-ps-text-muted">
+                  <span key={i} className="text-micro font-mono text-ps-text-muted">
                     {d.toLocaleString("en-US", {
                       weekday: "short",
                       month: "short",
@@ -404,14 +405,14 @@ export default function SchedulePicker({
               </div>
             </div>
           )}
-        </div>
+        </Card>
       )}
 
       {/* Advanced: raw cron editor (collapsible) */}
       <button
         type="button"
         onClick={() => setShowAdvanced((v) => !v)}
-        className="text-xs text-ps-text-muted hover:text-ps-text-secondary font-mono underline"
+        className="text-micro text-ps-text-muted hover:text-ps-text-secondary font-mono underline"
         disabled={disabled}
       >
         {showAdvanced ? "Hide" : "Show"} advanced (raw cron)
@@ -442,7 +443,7 @@ export default function SchedulePicker({
               setAdvancedDraft(canonicalCron ?? value);
             }
           }}
-          placeholder="e.g. 0 9 * * 1-5" aria-label="e.g. 0 9 * * 1-5"
+          placeholder="e.g. 0 9 * * 1-5" aria-label="Raw cron expression"
           className={baseInputStyles}
           spellCheck={false}
           disabled={disabled}
@@ -450,12 +451,13 @@ export default function SchedulePicker({
       )}
 
       {/* Error. `draftError` is the picker's own: the composer never passes
-          `error`, so before T-0051 this block could not fire at all. */}
+          `error`, so before T-0051 this block could not fire at all. A line of
+          text under the control, as the Field kit says an error: not a box. */}
       {(error || draftError) && (
-        <div className="flex items-center gap-2 text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
+        <p className="flex items-center gap-2 text-body text-semantic-danger">
           <AlertCircle className="w-4 h-4 flex-shrink-0" aria-hidden="true" />
           {error ?? draftError}
-        </div>
+        </p>
       )}
     </div>
   );

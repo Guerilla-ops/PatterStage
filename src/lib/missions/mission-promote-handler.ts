@@ -9,35 +9,23 @@ import {
 import { buildMissionFieldPatch } from "@/lib/missions/mission-field-updates";
 import { dispatchMissionNow } from "@/lib/missions/mission-dispatch";
 import { runMissionQueueTick } from "@/lib/missions/mission-queue-tick";
-import { createSchedule } from "@/lib/schedules-repository";
+import { createSchedule } from "@/lib/schedule/schedules-repository";
 import { parseSchedule, scheduleDisplayFromParsed } from "@/lib/schedule/parse-schedule";
 import { computeNextRun, scheduleCanEverFire } from "@/lib/schedule/next-run";
+import { scheduleIntervalProblem } from "@/lib/schedule/interval-bounds";
 import { enrichedMission } from "@/lib/missions/mission-response";
-import { logApiError } from "@/lib/api-logger";
+import { logApiError } from "@/lib/api/api-logger";
 import { isMissionDraft, isMissionQueuedForRun } from "@/lib/missions/mission-board";
-import { DISPATCH_MODES, parseDispatchMode } from "@/lib/dispatch-mode";
-import type { Mission } from "@/lib/missions/mission-types";
+import { DISPATCH_MODES, parseDispatchMode } from "@/lib/ui/dispatch-mode";
+import type { Mission, MissionDraftFields } from "@/lib/missions/mission-types";
 
-export interface PromoteMissionInput {
+export interface PromoteMissionInput extends MissionDraftFields {
   missionId: string;
   dispatchMode: string;
-  schedule?: string;
   name?: string;
   instruction?: string;
   context?: string;
   localDirs?: unknown;
-  references?: string[];
-  skills?: string[];
-  suggestedToolsets?: string[];
-  goals?: string[];
-  modelId?: string;
-  provider?: string;
-  profileName?: string;
-  missionTimeMinutes?: number;
-  timeoutMinutes?: number;
-  categoryId?: string | null;
-  outputFormat?: string;
-  constraints?: string;
 }
 
 export type PromoteMissionResult =
@@ -170,10 +158,17 @@ export async function promoteMission(
           `exist, or a field outside its range. Check the day-of-month against the month.`,
       };
     }
+    // The opposite failure to the one above, and the expensive one: `every 0m`
+    // is due again the instant it fires, so it dispatches a paid agent run on
+    // every tick.
+    const tooFrequent = scheduleIntervalProblem(input.schedule!);
+    if (tooFrequent) {
+      return { ok: false, status: 400, error: tooFrequent };
+    }
     try {
       const current = getMission(input.missionId)!;
       const next = computeNextRun(input.schedule!, new Date());
-      const schedule = createSchedule({
+      createSchedule({
         missionId: input.missionId,
         name: current.name,
         schedule: input.schedule!,
@@ -182,18 +177,9 @@ export async function promoteMission(
         profileName: input.profileName ?? current.profileName ?? null,
         nextRunAt: next ? next.toISOString() : null,
       });
-
-      // Best-effort first run, linked to the schedule.
-      try {
-        await dispatchMissionNow(input.missionId, {
-          profileName: input.profileName,
-          modelId: input.modelId,
-          provider: input.provider,
-          scheduleId: schedule.id,
-        });
-      } catch (err) {
-        logApiError("promoteMission", "schedule first-run", err);
-      }
+      // No first run here, for the reason the dispatch handler gives at the
+      // same spot: putting a mission on a timer is not asking for a run now,
+      // and the operator had a Run now button to choose instead (T-0114).
     } catch (err) {
       logApiError("promoteMission", "schedule promote", err);
       updateMission(input.missionId, { status: "failed" });

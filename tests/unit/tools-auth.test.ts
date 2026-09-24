@@ -1,4 +1,5 @@
 /** @jest-environment node */
+/* eslint-disable @typescript-eslint/no-require-imports */
 
 // /api/tools only has GET and POST — PUT is tested via POST(action="configure").
 //
@@ -40,29 +41,13 @@ jest.mock("@/modules/hermes/lib/agent-runtime", () => ({
   })),
 }));
 
-jest.mock("@/lib/paths", () => ({
-  PS_DATA_DIR: "/tmp/ch-data",
-  PATHS: {
-    missions: "/tmp/ch-data/missions",
-    patterStageDb: "/tmp/ch-data/control-hub.db",
-    templates: "/tmp/ch-data/templates",
-    stories: "/tmp/ch-data/stories",
-    recroom: "/tmp/ch-data/recroom",
-    workspaces: "/tmp/ch-data/workspaces",
-    auditLog: "/tmp/ch-data/audit",
-    psScripts: "/tmp/ch-data/scripts",
-    psHardwareLogs: "/tmp/ch-data/logs",
-  },
-  getPsScriptsDir: () => "/tmp/ch-data/scripts",
-  getPsHardwareLogDir: () => "/tmp/ch-data/logs",
-}));
+jest.mock("@/lib/host/paths", () => require("../helpers/mocks").pathsMock());
 
-jest.mock("@/lib/api-logger", () => ({
+jest.mock("@/lib/api/api-logger", () => ({
   logApiError: jest.fn(),
 }));
 
-jest.mock("@/lib/api-auth", () => ({
-  requireNotReadOnly: jest.fn(() => null),
+jest.mock("@/lib/api/api-auth", () => ({
   isReadOnly: jest.fn(() => false),
 }));
 
@@ -80,7 +65,6 @@ describe("POST /api/tools configure action auth", () => {
   // calls this handler directly bypasses the thing it means to check. The
   // guarantee is asserted per route, in both directions, in
   // tests/unit/read-only-actually-reads.test.ts.
-
 
   // Restored from the T-0048 sweep. The mock plumbing this was entangled with is
   // gone; the 405 it asserts is real behaviour and worth keeping: the tools

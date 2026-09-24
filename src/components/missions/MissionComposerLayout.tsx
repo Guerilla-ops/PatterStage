@@ -5,7 +5,7 @@ import { ChevronRight } from "lucide-react";
 
 export function ComposerFieldLabel({ children }: { children: ReactNode }) {
   return (
-    <label className="text-xs text-ps-text-muted font-mono block mb-1.5">
+    <label className="text-micro text-ps-text-muted font-mono block mb-1.5">
       {children}
     </label>
   );
@@ -51,32 +51,32 @@ export function ComposerAccordion({
 
   return (
     <section
-      className={`pt-6 border-t border-white/10 overflow-visible border-l-2 pl-3 -ml-0.5 ${!open ? borderAccent : "border-l-white/10"}`}
+      className={`pt-6 border-t border-ps-edge-hairline overflow-visible border-l-2 pl-3 -ml-0.5 ${!open ? borderAccent : "border-l-ps-edge-hairline"}`}
     >
       <div className="flex items-start justify-between gap-3">
         <button
           type="button"
           onClick={toggle}
-          className="flex-1 flex items-start justify-between gap-3 py-3 text-left hover:bg-white/[0.02] rounded-lg -mx-1 px-1 transition-colors min-w-0"
+          className="flex-1 flex items-start justify-between gap-3 py-3 text-left hover:bg-ps-surface-raised rounded-ps-md -mx-1 px-1 transition-colors min-w-0"
           aria-expanded={open}
         >
           <span className="min-w-0 flex items-start gap-2">
             {step != null && (
-              <span className="shrink-0 w-5 h-5 rounded-full border border-white/20 text-xs font-mono text-ps-text-muted flex items-center justify-center mt-0.5">
+              <span className="shrink-0 w-5 h-5 rounded-full border border-ps-edge-emphasis text-micro font-mono text-ps-text-muted flex items-center justify-center mt-0.5">
                 {step}
               </span>
             )}
             <span className="min-w-0">
-              <span className="block text-xs font-mono text-ps-text-muted uppercase tracking-widest">
+              <span className="block text-micro font-mono text-ps-text-muted uppercase tracking-widest">
                 {title}
               </span>
               {description && (
-                <span className="block text-xs text-ps-text-muted font-mono mt-1 leading-relaxed">
+                <span className="block text-micro text-ps-text-muted font-mono mt-1 leading-relaxed">
                   {description}
                 </span>
               )}
               {!open && hintWhenCollapsed && (
-                <span className="block text-xs text-neon-cyan/80 font-mono mt-1.5">
+                <span className="block text-micro text-neon-cyan/80 font-mono mt-1.5">
                   {hintWhenCollapsed}
                 </span>
               )}

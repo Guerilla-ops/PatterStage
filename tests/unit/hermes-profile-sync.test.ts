@@ -1,29 +1,16 @@
-/* eslint-disable @typescript-eslint/no-require-imports */
 /** @jest-environment node */
+/* eslint-disable @typescript-eslint/no-require-imports */
 
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 
-import { execBaselineSchema } from "../helpers/baseline-db";
+import { openBaselineDb } from "../helpers/baseline-db";
 
 let testDb: import("better-sqlite3").Database | null = null;
 let hermesRoot = "";
 
-function loadRealBetterSqlite3(): typeof import("better-sqlite3") {
-  return require("better-sqlite3/lib/index.js") as typeof import("better-sqlite3");
-}
-
-jest.mock("@/lib/db", () => {
-  const actualCrypto = jest.requireActual("crypto") as typeof import("crypto");
-  return {
-    getDb: () => testDb!,
-    inTransaction: <T,>(fn: () => T) => testDb!.transaction(fn)(),
-    uuid: () => actualCrypto.randomUUID(),
-    now: () => new Date().toISOString(),
-    ensureDb: () => undefined,
-  };
-});
+jest.mock("@/lib/db", () => require("../helpers/baseline-db").dbSingletonMock(() => testDb));
 
 jest.mock("@/modules/hermes/lib/profile-paths", () => {
   const actual = jest.requireActual("@/modules/hermes/lib/profile-paths") as typeof import("@/modules/hermes/lib/profile-paths");
@@ -35,12 +22,7 @@ jest.mock("@/modules/hermes/lib/profile-paths", () => {
 });
 
 beforeEach(() => {
-  const Database = loadRealBetterSqlite3();
-  testDb = new (Database as unknown as new (path: string) => import("better-sqlite3").Database)(
-    ":memory:"
-  );
-  testDb.pragma("foreign_keys = ON");
-  execBaselineSchema(testDb);
+  testDb = openBaselineDb();
   hermesRoot = mkdtempSync(join(tmpdir(), "ch-hermes-sync-"));
   writeFileSync(join(hermesRoot, "config.yaml"), "version: 1\n");
 });
@@ -141,5 +123,24 @@ describe("profile push / pull / drift", () => {
     expect(json.cli).toEqual(["hermes-cli"]);
     const drift = detectProfileDrift("bob");
     expect(drift.fields).not.toContain("config.yaml");
+  });
+});
+
+describe("pull refuses a corrupt root config.yaml and names the repair (T-0086)", () => {
+  it("leaves the row alone and points at the newest parseable backup", () => {
+    const rootRepo = require("@/lib/agents/agent-root-repository") as typeof import("@/lib/agents/agent-root-repository");
+    const pull = require("@/modules/hermes/lib/profile-pull") as typeof import("@/modules/hermes/lib/profile-pull");
+    rootRepo.updateAgentRoot({ configYaml: "skills:\n  disabled: []\nversion: 1\n" });
+    const before = rootRepo.getAgentRoot().configYaml;
+    mkdirSync(join(hermesRoot, "backups"), { recursive: true });
+    writeFileSync(join(hermesRoot, "backups", "config.yaml.2026-08-30T10-00-00-000Z.bak"), "version: 1\n");
+    writeFileSync(join(hermesRoot, "config.yaml"), "model:\n  a: 1\nmodel:\n  b: 2\n");
+
+    const result = pull.pullRootFromHermes();
+
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/did not parse/);
+    expect(result.error).toMatch(/Restore .*2026-08-30T10-00-00-000Z.*then Pull again/);
+    expect(rootRepo.getAgentRoot().configYaml).toBe(before);
   });
 });

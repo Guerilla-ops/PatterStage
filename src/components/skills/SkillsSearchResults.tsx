@@ -14,7 +14,7 @@
 "use client";
 
 import { Search } from "lucide-react";
-import { EmptyState } from "@/components/ui/LoadingSpinner";
+import { EmptyState } from "@/components/ui/EmptyState";
 import { SkillRowList } from "@/components/skills/SkillRowList";
 import type { Skill } from "@/types/console";
 
@@ -48,7 +48,7 @@ export default function SkillsSearchResults({
   return (
     <div className="space-y-3">
       <p
-        className="text-xs font-mono text-ps-text-muted"
+        className="text-micro font-mono text-ps-text-muted"
         data-testid="skills-search-summary"
       >
         {matches.length} {matches.length === 1 ? "match" : "matches"} across all{" "}

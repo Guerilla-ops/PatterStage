@@ -3,22 +3,12 @@
 // Phase 1.5-B — the workflow builder (whole-graph replace + guards) and the
 // conditional branch routing (OUTCOME → on_<outcome>), backward-compatible.
 
-import { join } from "path";
-import { execBaselineSchema } from "../helpers/baseline-db";
+import { openBaselineDb } from "../helpers/baseline-db";
 import { applyComposerMigration } from "@/lib/db/apply-composer-migration";
 import { applyComposerGroupLinkMigration } from "@/lib/db/apply-composer-group-link-migration";
 
 let testDb: import("better-sqlite3").Database | null = null;
-jest.mock("@/lib/db", () => {
-  const actualCrypto = jest.requireActual("crypto") as typeof import("crypto");
-  return {
-    getDb: () => testDb!,
-    inTransaction: <T,>(fn: () => T) => testDb!.transaction(fn)(),
-    uuid: () => actualCrypto.randomUUID(),
-    now: () => new Date().toISOString(),
-    ensureDb: () => undefined,
-  };
-});
+jest.mock("@/lib/db", () => require("../helpers/baseline-db").dbSingletonMock(() => testDb));
 jest.mock("@/lib/runtime", () => ({
   runtime: { submitRun: jest.fn(), getRun: jest.fn(), stopRun: jest.fn() },
 }));
@@ -34,8 +24,6 @@ import {
 import { resolveNext } from "@/lib/composer/engine";
 import { parseVerdict } from "@/lib/composer/verdict";
 import type { ComposerNodeRun } from "@/lib/composer/schema";
-
-const migrationsDir = join(process.cwd(), "src", "lib", "db", "migrations");
 
 const BRANCHY = {
   key: "branchy",
@@ -56,12 +44,10 @@ const BRANCHY = {
 };
 
 beforeEach(() => {
-  const Database = require("better-sqlite3/lib/index.js") as typeof import("better-sqlite3");
-  testDb = new (Database as unknown as new (p: string) => import("better-sqlite3").Database)(":memory:");
-  testDb.pragma("foreign_keys = ON");
-  execBaselineSchema(testDb);
-  applyComposerMigration(testDb, migrationsDir);
-  applyComposerGroupLinkMigration(testDb, migrationsDir);
+  testDb = openBaselineDb([
+    applyComposerMigration,
+    applyComposerGroupLinkMigration,
+  ]);
 });
 afterEach(() => {
   testDb?.close();

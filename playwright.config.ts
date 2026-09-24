@@ -40,7 +40,21 @@ export default defineConfig({
     {
       name: "chromium",
       use: { ...devices["Desktop Chrome"] },
+      // The phone spec runs under its own project, below, and nowhere else.
+      testIgnore: "**/phone.spec.ts",
     },
+    // The 390x844 project (T-0128). One file, the whole route matrix: gate 9's
+    // containment at 390 and 1024, the icon rail between 768 and 1024, and the
+    // drawer's focus ring. Deferred by the last programme; landed with gate 9.
+    ...(smokeOnly
+      ? []
+      : [
+          {
+            name: "phone",
+            use: { ...devices["Desktop Chrome"], viewport: { width: 390, height: 844 }, hasTouch: true },
+            testMatch: "**/phone.spec.ts",
+          },
+        ]),
   ],
   use: {
     baseURL,
@@ -69,7 +83,7 @@ export default defineConfig({
     // Isolated, fresh DB per run (prepare-data-dir.mjs wipes it before boot),
     // independent of the developer's working DB and free of legacy schema drift.
     //
-    // PS_DATA_DIR as well as CH_DATA_DIR, because src/lib/paths.ts resolves
+    // PS_DATA_DIR as well as CH_DATA_DIR, because src/lib/host/paths.ts resolves
     // PS_DATA_DIR first and .env.local sets it. Next.js loads .env.local on
     // `next start` and does not override variables already present in the
     // environment, so setting only CH_DATA_DIR meant any developer with

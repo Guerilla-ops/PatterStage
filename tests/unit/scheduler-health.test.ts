@@ -4,7 +4,7 @@
 // only evidence that the loop firing schedules and reconciling runs was alive
 // was a console.log on a server terminal.
 
-jest.mock("@/lib/system-repository", () => ({ getMetaPair: jest.fn() }));
+jest.mock("@/lib/system/system-repository", () => ({ getMetaPair: jest.fn() }));
 
 import {
   HEARTBEAT_STALE_MS,
@@ -12,7 +12,7 @@ import {
   META_OWNER_PID,
   readSchedulerHealth,
 } from "@/lib/orchestration/scheduler/health";
-import { getMetaPair } from "@/lib/system-repository";
+import { getMetaPair } from "@/lib/system/system-repository";
 import { describeSchedulerHealth } from "@/lib/dashboard/scheduler-pill";
 
 const mockGetMetaPair = getMetaPair as jest.Mock;
@@ -115,7 +115,6 @@ describe("describeSchedulerHealth", () => {
     ).toBe("last tick 3h ago · pid 1");
   });
 });
-
 
 // ── A follower looks exactly like the owner (T-0064) ────────────
 //

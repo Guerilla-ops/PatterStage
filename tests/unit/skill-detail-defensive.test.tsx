@@ -2,7 +2,8 @@
  * @jest-environment jsdom
  */
 
-import { render, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
+import { renderWithQuery as render } from "../helpers/render-with-query";
 
 // Mock useParams to simulate various path shapes the catch-all route
 // can produce. Mirrors Next.js's actual return shape for [...path] routes
@@ -11,14 +12,18 @@ const mockUseParams = jest.fn();
 jest.mock("next/navigation", () => ({
   useParams: () => mockUseParams(),
   useRouter: () => ({ push: jest.fn(), replace: jest.fn(), back: jest.fn() }),
-  usePathname: () => "/operations/skills",
+  usePathname: () => "/agent/skills",
   useSearchParams: () => new URLSearchParams(),
   notFound: jest.fn(),
 }));
 
 const mockApiFetch = jest.fn();
-jest.mock("@/lib/api-fetch", () => ({
+jest.mock("@/lib/api/api-fetch", () => ({
   apiFetch: (...args: unknown[]) => mockApiFetch(...args),
+  // The page reads through useApiResource, which calls safeApiCall; routed
+  // through the same mock so "the API was not called" is still one count (C6, T-0143).
+  // eslint-disable-next-line @typescript-eslint/no-require-imports -- hoisting-safe inside jest.mock
+  safeApiCall: require("../helpers/mocks").safeApiCallOver((...a: unknown[]) => mockApiFetch(...a)),
 }));
 
 jest.mock("@/components/layout/AppPageShell", () => ({
@@ -33,7 +38,7 @@ jest.mock("@/components/ui/LoadingSpinner", () => ({
   LoadingSpinner: () => <div data-testid="loading-spinner">Loading</div>,
 }));
 
-import SkillDetailPage from "@/app/operations/skills/[...path]/page";
+import SkillDetailPage from "@/app/agent/skills/[...path]/page";
 
 beforeEach(() => {
   mockUseParams.mockReset();

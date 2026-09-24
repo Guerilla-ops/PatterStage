@@ -5,19 +5,16 @@
 // ═══════════════════════════════════════════════════════════════
 import { NextRequest, NextResponse } from "next/server";
 
-import { parseAndValidateJsonBody } from "@/lib/parse-json-body";
-import { serverErrorFromCatch } from "@/lib/api-logger";
+import { parseAndValidateJsonBody } from "@/lib/api/parse-json-body";
+import { serverErrorFromCatch } from "@/lib/api/api-logger";
 import { pushModelToHermes, pushCredential } from "@/modules/hermes/lib/sync-manager";
-import { getModelWithKey } from "@/lib/models-repository";
-import { ok } from "@/lib/api-response";
+import { getModelWithKey } from "@/lib/models/models-repository";
+import { ok } from "@/lib/api/api-response";
+import { answerSingle } from "@/modules/hermes/lib/sync-answer";
 import { z } from "zod";
 
 export async function POST(request: NextRequest) {
-  // `modelId` is required; `pushCredential` defaults to `true` when
-  // absent (matches the pre-refactor `!== false` semantics). The zod
-  // `.min(1)` + string check makes the post-parse `if (!modelId)`
-  // unreachable — a missing/empty `modelId` surfaces as a 400 from
-  // `zodErrorResponse` with the same "modelId is required" text.
+  // `modelId` is required; `pushCredential` defaults to `true` when absent.
   const pushPostSchema = z
     .object({
       modelId: z.string().min(1, "modelId is required"),
@@ -33,7 +30,15 @@ export async function POST(request: NextRequest) {
   try {
     const modelResult = pushModelToHermes(modelId);
     if (!modelResult.success) {
-      return ok({ success: false, details: modelResult.details, backupPath: modelResult.backupPath });
+      // A 500 naming the model and the reason, the shape every sync route
+      // answers with. This was a 200 with `success: false`, and the hook
+      // toasted "Model pushed to Hermes" over an assembler refusal
+      // (T-0095, D125).
+      return answerSingle("Push to Hermes", {
+        success: false,
+        slug: modelId,
+        error: modelResult.details[0]?.detail ?? null,
+      });
     }
 
     const details = [...modelResult.details];

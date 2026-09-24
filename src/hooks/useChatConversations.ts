@@ -2,8 +2,7 @@
 // useChatConversations — the sidebar list and which one is active
 // ═══════════════════════════════════════════════════════════════
 //
-// Split out of useChatPage (Phase 4 god-file decomposition). Owns the
-// server-persisted conversation list, the active id, and the four
+// Owns the server-persisted conversation list, the active id, and the four
 // things a user does to a row: start a new one, select it, delete it,
 // export it. Plus `refreshActiveConversation`, the reconciliation read
 // the stream falls back to when the socket closes without a terminal
@@ -15,13 +14,13 @@
 
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Dispatch, MouseEvent, RefObject, SetStateAction } from "react";
 
 import type { ToastType } from "@/components/ui/Toast";
 import type { ChatConversation, ChatMessage } from "@/types/chat";
+import { useApiResource } from "@/hooks/useApiResource";
 import {
-  fetchConversations,
   fetchConversation,
   createConversationApi,
   deleteConversationApi,
@@ -29,7 +28,7 @@ import {
   conversationToCsv,
   sanitiseFilename,
   downloadFile,
-} from "@/lib/chat-utils";
+} from "@/lib/chat/chat-utils";
 import { stopEvent, type PendingApproval } from "@/hooks/chat-local-message";
 
 type ToastFn = (message: string, type?: ToastType) => void;
@@ -37,7 +36,10 @@ type ToastFn = (message: string, type?: ToastType) => void;
 export interface UseChatConversationsArgs {
   /** Tear down the live run-event stream / fast-mode fetch. */
   closeStream: () => void;
-  messages: ChatMessage[];
+  // No `messages` here on purpose: the export used to read the open
+  // conversation's turns rather than the clicked row's (D43), and the only way
+  // to make that mistake unrepeatable is to stop handing this hook the
+  // transcript at all.
   setMessages: Dispatch<SetStateAction<ChatMessage[]>>;
   setIsStreaming: Dispatch<SetStateAction<boolean>>;
   setPendingApproval: Dispatch<SetStateAction<PendingApproval | null>>;
@@ -50,7 +52,6 @@ export interface UseChatConversationsArgs {
 
 export function useChatConversations({
   closeStream,
-  messages,
   setMessages,
   setIsStreaming,
   setPendingApproval,
@@ -59,28 +60,46 @@ export function useChatConversations({
   inputRef,
   showToast,
 }: UseChatConversationsArgs) {
+  // The list is a read like any other (T-0129): cached, deduped, and re-read
+  // through `refetch` after a send lands. The local copy below exists because
+  // the row actions edit the list ahead of the server (a new row is prepended
+  // the moment it is created, a deleted one drops at once) and the send hook
+  // writes titles through `setConversations`; the read seeds it and every
+  // later answer replaces it.
+  const list = useApiResource<ChatConversation[]>("/api/chat", {
+    select: (p) => (p as { conversations?: ChatConversation[] } | null)?.conversations ?? [],
+    errorMessage: "Failed to load conversations",
+  });
   const [conversations, setConversations] = useState<ChatConversation[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
+  // The list read's failure, kept apart from the list: the sidebar rendered
+  // "No conversations yet" over a 500 because the reader swallowed the
+  // failure into an empty array (T-0096, the read contract).
+  const listError = list.error;
 
-  // ── Load conversations on mount ─────────────────────────────
-  const loadConversations = useCallback(async () => {
-    const list = await fetchConversations();
-    setConversations(list);
-    return list;
-  }, []);
-
+  // The first answer picks the active row, and only the first: a later
+  // re-read must not move the operator off the conversation they opened.
+  const seededRef = useRef(false);
   useEffect(() => {
-    void (async () => {
-      const list = await loadConversations();
-      if (list.length > 0) setActiveId(list[0].id);
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (!list.data) return;
+    setConversations(list.data);
+    if (seededRef.current) return;
+    seededRef.current = true;
+    if (list.data.length > 0) setActiveId(list.data[0].id);
+  }, [list.data]);
+
+  const { refetch: refetchList } = list;
+  const loadConversations = useCallback(async () => {
+    const answer = await refetchList();
+    return answer.data?.value ?? ([] as ChatConversation[]);
+  }, [refetchList]);
 
   const refreshActiveConversation = useCallback(async () => {
     if (!activeId) return;
     const loaded = await fetchConversation(activeId);
-    if (loaded) setMessages(loaded.messages);
+    // A reconciliation read that failed leaves the transcript as it is; the
+    // stream's own terminal state already says what happened.
+    if (loaded.ok && loaded.messages) setMessages(loaded.messages);
   }, [activeId, setMessages]);
 
   // ── New conversation ────────────────────────────────────────
@@ -142,20 +161,37 @@ export function useChatConversations({
   );
 
   // ── Download conversation ───────────────────────────────────
+  //
+  // This read is the fix for D43. The handler used to close over `messages` —
+  // the turns of whatever conversation was CURRENTLY OPEN — and serialise them
+  // under the CLICKED row's title and id. Every sidebar row carries the two
+  // download buttons and none of them selects the row first, so exporting any
+  // row but the active one handed the operator a different conversation's words
+  // in a file named after this one. Plausible, silent and wrong. So we fetch the
+  // row's own transcript, and say so when we cannot.
   const handleDownloadConversation = useCallback(
-    (conversation: ChatConversation, format: "json" | "csv", e?: MouseEvent) => {
+    async (conversation: ChatConversation, format: "json" | "csv", e?: MouseEvent) => {
       stopEvent(e);
+      const loaded = await fetchConversation(conversation.id);
+      if (!loaded.ok || !loaded.messages) {
+        showToast("Failed to export conversation", "error");
+        return;
+      }
       const safeTitle = sanitiseFilename(conversation.title);
       const ts = Date.now();
       if (format === "json") {
-        downloadFile(conversationToJson(conversation, messages), `${safeTitle}_${ts}.json`, "application/json");
+        downloadFile(
+          conversationToJson(conversation, loaded.messages),
+          `${safeTitle}_${ts}.json`,
+          "application/json",
+        );
         showToast("Conversation exported as JSON", "success");
       } else {
-        downloadFile(conversationToCsv(messages), `${safeTitle}_${ts}.csv`, "text/csv");
+        downloadFile(conversationToCsv(loaded.messages), `${safeTitle}_${ts}.csv`, "text/csv");
         showToast("Conversation exported as CSV", "success");
       }
     },
-    [messages, showToast],
+    [showToast],
   );
 
   const activeConversation = conversations.find((c) => c.id === activeId);
@@ -164,6 +200,7 @@ export function useChatConversations({
   return {
     conversations,
     setConversations,
+    listError,
     activeId,
     setActiveId,
     activeConversation,

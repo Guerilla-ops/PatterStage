@@ -9,7 +9,8 @@
 
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, type ReactNode } from "react";
+import type { ModelRow } from "@/lib/models/model-types";
 import {
   Plus,
   Edit3,
@@ -18,28 +19,22 @@ import {
   Check,
 } from "lucide-react";
 
+import { Panel } from "@/components/dashboard/Panel";
 import Modal from "@/components/ui/Modal";
 import Button from "@/components/ui/Button";
+import type { ToastType } from "@/components/ui/Toast";
 import CredentialPicker, {
   type CredentialOption,
 } from "@/components/models/CredentialPicker";
-import FieldRow from "@/components/models/FieldRow";
 import { Input, Select } from "@/components/ui/field";
-import { apiFetch, setErrorFromCaught } from "@/lib/api-fetch";
+import { apiFetch } from "@/lib/api/api-fetch";
+import { runWrite } from "@/lib/api/api-write";
 
 /**
  * Minimal model shape for the editor form — a subset of ApiModel
  * that omits defaults, createdAt, updatedAt (not editable in the form).
  */
-export interface ModelEditorRecord {
-  id: string;
-  name: string;
-  provider: string;
-  modelId: string;
-  baseUrl: string | null;
-  contextLength: number | null;
-  credentialsId: string | null;
-}
+export type ModelEditorRecord = ModelRow;
 
 interface ModelEditorProps {
   /** When null, the modal is in create mode. */
@@ -55,6 +50,12 @@ interface ModelEditorProps {
    * component may not.
    */
   providers: readonly string[];
+  /**
+   * The subset of `providers` that works without an API key, supplied by the
+   * page for the same ADR-0005 reason as `providers` itself. Empty by default,
+   * which is the behaviour every caller had before D15.
+   */
+  keylessProviders?: readonly string[];
   onClose: () => void;
   onSaved: () => void;
 }
@@ -85,38 +86,27 @@ function initialFormState(model: ModelEditorRecord | null): FormState {
 }
 
 /**
- * Validate the model-editor form before submission. Pure function
- * (no side effects) — returns the user-facing error string for the
- * first failing field, or `null` if all fields are valid. Centralises
- * the 4 sequential `if (!X) return setError(Y)` checks that previously
- * inlined the validation logic into `handleSubmit`, so the caller can
- * early-return on a single guard instead of repeating the `setError +
- * return` shape. The auto-fill of `credentialLabel` (a state
- * side-effect) is intentionally NOT done here — it lives in the caller
- * after the validation passes, so the helper stays pure and the state
- * mutation is visible in the same scope as the submit flow.
+ * Validate the model-editor form before submission. Returns the user-facing
+ * error for the first failing field, or `null`. Pure: the `credentialLabel`
+ * auto-fill is a state side-effect and stays in the caller.
  */
 function validateModelForm(
   form: FormState,
   isEdit: boolean,
   usingExisting: boolean,
+  keyless = false,
 ): string | null {
   if (!form.name.trim()) return "Name is required";
   if (!form.modelId.trim()) return "Model ID is required";
-  if (!isEdit && !usingExisting && !form.apiKey.trim()) {
+  // A local Ollama has no key to demand. Requiring one made the operator
+  // invent a string, which then got written into the agent's env file as
+  // though it meant something (T-0100, D15).
+  if (!isEdit && !usingExisting && !keyless && !form.apiKey.trim()) {
     return "API key is required when creating a new credential";
   }
   return null;
 }
 
-/**
- * Parse an optional string-form numeric field. Centralises the
- * `trim() === "" ? null : <trim()>` pattern that was duplicated for
- * `baseUrl` (raw string) and `contextLength` (Number-coerced). Returns
- * the parsed value or `null` for blank input. The `parse` parameter
- * lets the caller control the value transformation (raw string for
- * baseUrl, Number() for contextLength).
- */
 function parseOptionalStringField(
   raw: string,
   parse: (trimmed: string) => string | number,
@@ -125,10 +115,38 @@ function parseOptionalStringField(
   return trimmed === "" ? null : parse(trimmed);
 }
 
+/**
+ * The labelled field shell this form repeats seven times: a label, the
+ * control, and an optional caption under it. The label takes a node so a
+ * call site can carry an inline "(optional)" marker; the control is passed
+ * through as-is and owns its own chrome. It was a file of its own
+ * (FieldRow.tsx) with one importer, which is this one (C6).
+ */
+function FieldRow({
+  label,
+  children,
+  description,
+}: {
+  label: ReactNode;
+  children: ReactNode;
+  description?: string;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <label className="text-body font-medium text-ps-text-secondary">{label}</label>
+      {children}
+      {description && (
+        <p className="text-micro text-ps-text-muted font-mono">{description}</p>
+      )}
+    </div>
+  );
+}
+
 export default function ModelEditor({
   model,
   credentials,
   providers,
+  keylessProviders = [],
   onClose,
   onSaved,
 }: ModelEditorProps) {
@@ -146,19 +164,21 @@ export default function ModelEditor({
   );
 
   const usingExisting = form.credentialsId !== null;
+  // Read off the injected list rather than imported: this component is core
+  // and the provider vocabulary belongs to the agent framework (ADR-0005).
+  const keyless = keylessProviders.includes(form.provider);
+
+  // runWrite's words, said where this modal says things. A failure goes under
+  // the title, as the alert the fields sit beneath. The success is not said
+  // here: the page announces "Model saved" once the registry has reloaded
+  // (useModelActions.handleSaved), and by then this modal has unmounted, so a
+  // toast from here would say it twice.
+  const sayInline = (message: string, type?: ToastType) => {
+    if (type === "error") setError(message);
+  };
 
   const handleSubmit = async () => {
-    // Field-level validation — single guard against the pure helper
-    // (returns the first failing field's error message, or `null`).
-    // Pre-refactor: 4 sequential `if (!X) return setError(Y)` checks
-    // each combined validation + side-effect into 1 line; the
-    // credentialLabel auto-fill (a state mutation) was entangled
-    // with the validation flow, making the order of side-effects
-    // implicit. Post-refactor: validation is a pure function call,
-    // and the credentialLabel auto-fill (still a state mutation)
-    // lives between the validation guard and the saving state
-    // transition so its position in the flow is explicit.
-    const validationError = validateModelForm(form, isEdit, usingExisting);
+    const validationError = validateModelForm(form, isEdit, usingExisting, keyless);
     if (validationError) {
       setError(validationError);
       return;
@@ -168,73 +188,63 @@ export default function ModelEditor({
       update("credentialLabel", `${form.provider} key`);
     }
 
-    setSaving(true);
     setError(null);
 
-    try {
-      let credentialsId = form.credentialsId;
+    // One write as far as the operator is concerned, in two calls: the
+    // credential first when a key was pasted, then the model that points at
+    // it. A throw from either lands in the alert above the fields.
+    await runWrite({
+      showToast: sayInline,
+      setBusy: setSaving,
+      request: async () => {
+        let credentialsId = form.credentialsId;
 
-      if (!usingExisting && form.apiKey.trim().length > 0) {
-        const label =
-          form.credentialLabel.trim() || `${form.provider} key`;
-        const result = await apiFetch<{ data?: { credential?: { id: string } } }>("/api/credentials", {
-          method: "POST",
-          body: JSON.stringify({
-            label,
-            provider: form.provider,
-            apiKey: form.apiKey.trim(),
-          }),
-        });
-        const newId = result.data?.credential?.id;
-        if (!newId) throw new Error("Credential creation returned no id");
-        credentialsId = newId;
-      }
+        if (!usingExisting && form.apiKey.trim().length > 0) {
+          const label =
+            form.credentialLabel.trim() || `${form.provider} key`;
+          const result = await apiFetch<{ data?: { credential?: { id: string } } }>("/api/credentials", {
+            method: "POST",
+            body: JSON.stringify({
+              label,
+              provider: form.provider,
+              apiKey: form.apiKey.trim(),
+            }),
+          });
+          const newId = result.data?.credential?.id;
+          if (!newId) throw new Error("Credential creation returned no id");
+          credentialsId = newId;
+        }
 
-      const baseUrl = parseOptionalStringField(form.baseUrl, (t) => t) as string | null;
-      const contextLength = parseOptionalStringField(
-        form.contextLength,
-        Number,
-      ) as number | null;
+        const baseUrl = parseOptionalStringField(form.baseUrl, (t) => t) as string | null;
+        const contextLength = parseOptionalStringField(
+          form.contextLength,
+          Number,
+        ) as number | null;
 
-      if (
-        contextLength !== null &&
-        (!Number.isFinite(contextLength) || contextLength <= 0)
-      ) {
-        throw new Error("Context length must be a positive number");
-      }
+        if (
+          contextLength !== null &&
+          (!Number.isFinite(contextLength) || contextLength <= 0)
+        ) {
+          throw new Error("Context length must be a positive number");
+        }
 
-      const body: Record<string, unknown> = {
-        name: form.name.trim(),
-        provider: form.provider,
-        modelId: form.modelId.trim(),
-        baseUrl,
-        contextLength,
-        credentialsId,
-      };
+        const body: Record<string, unknown> = {
+          name: form.name.trim(),
+          provider: form.provider,
+          modelId: form.modelId.trim(),
+          baseUrl,
+          contextLength,
+          credentialsId,
+        };
 
-      if (isEdit && model) {
-        await apiFetch(`/api/models/${encodeURIComponent(model.id)}`, { method: "PUT", body: JSON.stringify(body) });
-      } else {
-        await apiFetch("/api/models", { method: "POST", body: JSON.stringify(body) });
-      }
-
-      onSaved();
-    } catch (err) {
-      setErrorFromCaught(setError, err, "Save failed");
-    } finally {
-      // Always clear the saving state, regardless of success or failure.
-      // The success path unmounts the modal via `onSaved()` → parent
-      // `setEditing(undefined)`, so this is currently invisible — but if
-      // the parent ever defers the unmount, OR if the modal is reused
-      // for a 2nd edit without remount, the saving spinner would stay
-      // stuck on the success path. The 3 lines are the same shape as
-      // `toggleSkill`'s `finally` block (skills page) and the
-      // `runFallbackMutation` pattern (useModelsPage) — one canonical
-      // place to reset the busy flag, not duplicated in success/failure
-      // branches. Was previously only in the catch block; the success
-      // path relied on the parent unmounting the modal.
-      setSaving(false);
-    }
+        return isEdit && model
+          ? apiFetch(`/api/models/${encodeURIComponent(model.id)}`, { method: "PUT", body: JSON.stringify(body) })
+          : apiFetch("/api/models", { method: "POST", body: JSON.stringify(body) });
+      },
+      successMessage: "Model saved",
+      errorMessage: "Save failed",
+      onSuccess: onSaved,
+    });
   };
 
   return (
@@ -264,13 +274,15 @@ export default function ModelEditor({
     >
       <div className="space-y-4">
         {error && (
-          <div
+          <Panel
             role="alert"
-            className="flex items-center gap-2 text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2"
+            accent="red"
+            tint="red"
+            className="flex items-center gap-2 px-3 py-2 text-body text-semantic-danger"
           >
             <AlertCircle className="w-4 h-4 flex-shrink-0" />
             <span>{error}</span>
-          </div>
+          </Panel>
         )}
 
         <FieldRow
@@ -313,7 +325,7 @@ export default function ModelEditor({
             label={
               <>
                 Base URL
-                <span className="ml-2 text-xs text-ps-text-muted font-mono">(optional)</span>
+                <span className="ml-2 text-micro text-ps-text-muted font-mono">(optional)</span>
               </>
             }
           >
@@ -328,7 +340,7 @@ export default function ModelEditor({
             label={
               <>
                 Context Length
-                <span className="ml-2 text-xs text-ps-text-muted font-mono">(optional)</span>
+                <span className="ml-2 text-micro text-ps-text-muted font-mono">(optional)</span>
               </>
             }
           >
@@ -347,13 +359,19 @@ export default function ModelEditor({
           selected={form.credentialsId}
           onChange={(id) => update("credentialsId", id)}
           providerFilter={form.provider}
+          keyless={keyless}
         />
 
         {!usingExisting && (
-          <div className="space-y-3 rounded-lg border border-neon-purple/15 bg-neon-purple/5 p-3">
-            <p className="text-xs font-mono text-neon-purple uppercase tracking-widest">
-              New credential
+          <Panel accent="purple" tint="purple" className="space-y-3 p-3">
+            <p className="text-micro font-mono text-neon-purple uppercase tracking-widest">
+              {keyless ? "Credential (optional)" : "New credential"}
             </p>
+            {keyless && (
+              <p className="text-body text-ps-text-muted">
+                {`${form.provider} needs no API key. Leave this blank, or paste one if your endpoint requires it.`}
+              </p>
+            )}
             <FieldRow label="Credential Label">
               <Input
                 type="text"
@@ -372,10 +390,16 @@ export default function ModelEditor({
                 autoComplete="off"
                 value={form.apiKey}
                 onChange={(e) => update("apiKey", e.target.value)}
-                placeholder={isEdit ? "Leave blank to keep existing" : "sk-..."}
+                placeholder={
+                  keyless
+                    ? "Leave blank, none needed"
+                    : isEdit
+                      ? "Leave blank to keep existing"
+                      : "sk-..."
+                }
               />
             </FieldRow>
-          </div>
+          </Panel>
         )}
       </div>
     </Modal>

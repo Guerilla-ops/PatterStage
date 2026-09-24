@@ -1,5 +1,5 @@
-/* eslint-disable @typescript-eslint/no-require-imports */
 /** @jest-environment node */
+/* eslint-disable @typescript-eslint/no-require-imports */
 // ═══════════════════════════════════════════════════════════════
 // Read-only mode still READS (T-0034, finding 6).
 //
@@ -7,7 +7,7 @@
 // siblings do, and the inconsistency invites the belief that a route without
 // one is unprotected. Reading the code turns the finding inside out.
 //
-// `requireAuth()` in src/lib/api-auth.ts does not authenticate. Its own header
+// `requireAuth()` in src/lib/api/api-auth.ts does not authenticate. Its own header
 // says so: it is `requireNotReadOnly()` under a name it kept to avoid churning
 // call sites during the security hotfix. Authentication is enforced once, in
 // src/proxy.ts, on every request including this one — that is the lock-book's
@@ -28,41 +28,31 @@
 // This is the repro, authored before the fix and kept forever.
 // ═══════════════════════════════════════════════════════════════
 
-jest.mock("next/server", () => {
-  class NextResponse {
-    status: number;
-    private _data: unknown;
-    constructor(data: unknown = null, init?: ResponseInit) {
-      this._data = data;
-      this.status = init?.status ?? 200;
-    }
-    json() {
-      return Promise.resolve(this._data);
-    }
-    static json(data: unknown, init?: ResponseInit) {
-      return new NextResponse(data, init);
-    }
-  }
-  return { NextRequest: class NextRequest {}, NextResponse };
-});
+jest.mock("next/server", () => require("../helpers/mocks").nextServerMock());
 
-jest.mock("@/lib/api-logger", () => ({
+jest.mock("@/lib/api/api-logger", () => ({
   logApiError: jest.fn(),
   serverErrorFromCatch: jest.fn(() => ({ status: 500, json: async () => ({ error: "boom" }) })),
 }));
-jest.mock("@/lib/db", () => ({ ensureDb: jest.fn() }));
+jest.mock("@/lib/db", () => require("../helpers/mocks").dbMock());
 jest.mock("@/lib/sync", () => ({ ensureSyncLayer: jest.fn() }));
-jest.mock("@/lib/audit-log", () => ({ appendAuditLine: jest.fn() }));
+jest.mock("@/lib/api/audit-log", () => ({ appendAuditLine: jest.fn() }));
 jest.mock("@/lib/missions/mission-repository", () => ({
   listMissions: jest.fn(() => [{ id: "m1", name: "Nightly digest" }]),
   getMission: jest.fn((id: string) => (id === "m1" ? { id: "m1", name: "Nightly digest" } : null)),
 }));
-jest.mock("@/lib/runs-repository", () => ({
+jest.mock("@/lib/runs/runs-repository", () => ({
   getLatestRunForMission: jest.fn(() => null),
   // A Map, because the handler calls .get() on it per row.
   listLatestRunsForMissions: jest.fn(() => new Map()),
 }));
 jest.mock("@/lib/orchestration/run-deadline", () => ({ buildMissionRunView: jest.fn(() => null) }));
+// GET /api/missions reads the schedule alongside the run now (T-0104, D68);
+// without these doubles the real repository reaches the real getDb.
+jest.mock("@/lib/schedule/schedules-repository", () => ({
+  getScheduleForMission: jest.fn(() => null),
+  listSchedulesForMissions: jest.fn(() => new Map()),
+}));
 
 // NOTE: @/lib/api-auth is deliberately NOT mocked. The whole point is the real
 // read-only guard reading the real environment variable.
@@ -110,29 +100,17 @@ describe("PS_READ_ONLY=true", () => {
     expect(res.status).toBe(200);
   });
 
-  it("still refuses POST /api/missions, which is a write", async () => {
-    const route = require("@/app/api/missions/route") as {
-      POST: (req: unknown) => Promise<Res>;
-    };
-    const res = await route.POST({ json: async () => ({ action: "promote" }) });
-    expect(res.status).toBe(503);
-  });
-
-  it("still refuses POST /api/missions/[id]/dispatch", async () => {
-    const route = require("@/app/api/missions/[id]/dispatch/route") as {
-      POST: (req: unknown, ctx: { params: Promise<{ id: string }> }) => Promise<Res>;
-    };
-    const res = await route.POST({}, { params: Promise.resolve({ id: "m1" }) });
-    expect(res.status).toBe(503);
-  });
-
-  it("still refuses POST /api/missions/[id]/cancel", async () => {
-    const route = require("@/app/api/missions/[id]/cancel/route") as {
-      POST: (req: unknown, ctx: { params: Promise<{ id: string }> }) => Promise<Res>;
-    };
-    const res = await route.POST({}, { params: Promise.resolve({ id: "m1" }) });
-    expect(res.status).toBe(503);
-  });
+  // Two cases were here: "still refuses POST /api/missions, which is a write"
+  // and "still refuses POST /api/missions/[id]/cancel". Both called the handler
+  // directly and pinned the 503 that the route's own requireNotReadOnly
+  // produced, which app-06 (ruled 2026-09-12) deleted. Neither mission route is
+  // host-side, so src/proxy.ts is the only boundary and it refuses the METHOD
+  // before either handler runs.
+  //
+  // They moved rather than went: k5-the-ruled-security-fixes.test.ts drives
+  // both through proxy() under the mode and requires the 503 and the remedy
+  // sentence. This file keeps what it is actually about — that the READS still
+  // answer under the mode, which is the defect it was written for.
 });
 
 describe("with writes allowed", () => {
@@ -175,7 +153,7 @@ describe("no route handler authenticates", () => {
       // authentication but only checks a flag is the defect the finding found.
       // The name may still appear in prose, because explaining what was removed
       // and why is the whole point of removing it.
-      const imports = src.match(/import\s*{[^}]*}\s*from\s*"@\/lib\/api-auth"/g) ?? [];
+      const imports = src.match(/import\s*{[^}]*}\s*from\s*"@\/lib\/api\/api-auth"/g) ?? [];
       for (const line of imports) expect(line).not.toMatch(/\brequireAuth\b/);
       expect(src).not.toMatch(/\brequireAuth\s*\(\s*\w/);
     }

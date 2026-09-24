@@ -43,29 +43,14 @@ jest.mock("@/modules/hermes/lib/agent-runtime", () => ({
   })),
 }));
 
-jest.mock("@/lib/paths", () => ({
-  PS_DATA_DIR: "/tmp/ch-data",
-  getPsDataDir: () => "/tmp/ch-data",
-  PATHS: {
-    patterStageDb: "/tmp/ch-data/control-hub.db",
-    missions: "/tmp/ch-data/missions",
-    templates: "/tmp/ch-data/templates",
-    stories: "/tmp/ch-data/stories",
-    recroom: "/tmp/ch-data/recroom",
-    workspaces: "/tmp/ch-data/workspaces",
-    auditLog: "/tmp/ch-data/audit",
-    psScripts: "/tmp/ch-data/scripts",
-    psHardwareLogs: "/tmp/ch-data/logs",
-  },
-  getPsScriptsDir: () => "/tmp/ch-data/scripts",
-  getPsHardwareLogDir: () => "/tmp/ch-data/logs",
-}));
+// eslint-disable-next-line @typescript-eslint/no-require-imports -- jest.mock factories are hoisted above imports
+jest.mock("@/lib/host/paths", () => require("../helpers/mocks").pathsMock({ getPsDataDir: () => "/tmp/ch-data" }));
 
-jest.mock("@/lib/api-logger", () => ({
+jest.mock("@/lib/api/api-logger", () => ({
   logApiError: jest.fn(),
 }));
 
-jest.mock("@/lib/api-auth", () => ({
+jest.mock("@/lib/api/api-auth", () => ({
 }));
 
 // /api/memory now probes the DB-owned active provider (like MemorySync) instead
@@ -86,11 +71,11 @@ jest.mock("@/lib/memory/memory-providers", () => ({
   })),
 }));
 
-jest.mock("@/lib/audit-log", () => ({
+jest.mock("@/lib/api/audit-log", () => ({
   appendAuditLine: jest.fn(),
 }));
 
-jest.mock("@/lib/skills-repository", () => ({
+jest.mock("@/lib/skills/skills-repository", () => ({
   // An empty catalog, read four ways. The route reads the metadata-only shape
   // and resolveEffectiveDisabledSkills reads the keys, so a mock that offers
   // only listSkills leaves the route calling `undefined()` and reports the
@@ -102,7 +87,7 @@ jest.mock("@/lib/skills-repository", () => ({
   deriveCategory: jest.fn(() => "uncategorized"),
 }));
 
-jest.mock("@/lib/agent-root-repository", () => ({
+jest.mock("@/lib/agents/agent-root-repository", () => ({
   getAgentRoot: jest.fn(() => ({
     disabledSkillsJson: "[]",
   })),

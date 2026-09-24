@@ -1,10 +1,15 @@
 "use client";
 
-import { useEffect, useId, useRef } from "react";
-import { Send, Save } from "lucide-react";
+import { sectionHeadingClasses } from "@/lib/ui/theme";
+import { useEffect, useId, useRef, type ReactNode } from "react";
+import { Send, Save, Wrench, X } from "lucide-react";
 
 import Button from "@/components/ui/Button";
+import Card from "@/components/ui/Card";
+import IconButton from "@/components/ui/IconButton";
+import Picker from "@/components/ui/Picker";
 import AutoTextarea from "@/components/ui/AutoTextarea";
+import { Input } from "@/components/ui/field";
 import SchedulePicker from "@/components/schedule/SchedulePicker";
 import LocalDirRow from "@/components/missions/LocalDirRow";
 import AgentRuntimeDefaultsCard from "@/components/missions/AgentRuntimeDefaultsCard";
@@ -12,8 +17,7 @@ import CategoryCombobox, {
   type CategoryOption,
 } from "@/components/missions/CategoryCombobox";
 import MissionPromptPreview from "@/components/missions/MissionPromptPreview";
-import SkillSelector from "@/components/ui/SkillSelector";
-import ToolsetSelector from "@/components/ui/ToolsetSelector";
+import SkillsPicker from "@/components/missions/SkillsPicker";
 import {
   ComposerAccordion,
   ComposerFieldLabel,
@@ -25,6 +29,8 @@ import {
   isMissionQueuedForRun,
 } from "@/lib/missions/mission-board";
 import { firstUnmetSubmitRequirement } from "@/lib/missions/mission-submit-requirement";
+import { useProfileToolsets } from "@/hooks/useProfileAttachables";
+import { useToolsetCatalog } from "@/hooks/useToolsetCatalog";
 
 export interface MissionFormState {
   newName: string;
@@ -72,6 +78,11 @@ export interface MissionCreateFormProps {
   onRetryCategories?: () => void;
   onSubmit: () => void;
   onSaveAsTemplate: () => void;
+  /**
+   * The name of the template the next Save-as-template click would overwrite,
+   * once the first click has armed it; null otherwise (T-0096, D51).
+   */
+  overwriteTemplateName?: string | null;
   onClose: () => void;
   dispatching: boolean;
   dispatchAcknowledged?: boolean;
@@ -194,12 +205,79 @@ export function dispatchSubmitLabel(
   return DEFAULT_DISPATCH_LABEL[dispatch];
 }
 
+const NOTICE_TONE = {
+  info: "text-neon-cyan/80",
+  warn: "text-status-warn",
+  neutral: "text-ps-text-muted",
+} as const;
+
+/** The banner at the top of an edit that says what kind of edit it is. */
+function EditNotice({
+  tone,
+  children,
+}: {
+  tone: keyof typeof NOTICE_TONE;
+  children: ReactNode;
+}) {
+  return (
+    <Card padding="sm" className={`text-micro font-mono ${NOTICE_TONE[tone]}`}>
+      {children}
+    </Card>
+  );
+}
+
+/**
+ * The toolsets a mission recommends. Prompt hints only: what a mission RUNS
+ * with comes from the profile's own toolset policy on Agent → Tools; this is
+ * what the prompt suggests. It was ui/ToolsetSelector, then a Picker of its
+ * own beside SkillsPicker (T-0125); this form is its one caller, so it lives
+ * here (C6).
+ */
+function ToolsetsPicker({
+  value,
+  onChange,
+  profileId,
+  max = 10,
+}: {
+  value: string[];
+  onChange: (toolsets: string[]) => void;
+  profileId?: string;
+  max?: number;
+}) {
+  const { toolsetLabel } = useToolsetCatalog();
+  const { data, isLoading } = useProfileToolsets(profileId);
+  const options = (data ?? []).map((id) => ({ value: id, label: toolsetLabel(id), hint: id }));
+  return (
+    <div>
+      <Picker
+        label="Toolsets"
+        multiple
+        searchable
+        max={max}
+        size="lg"
+        icon={Wrench}
+        color="orange"
+        loading={isLoading}
+        options={options}
+        value={value}
+        onChange={onChange}
+        placeholder="Recommend Hermes toolsets (optional)…"
+        emptyText="No toolsets on this profile. Configure them on Agent → Tools."
+      />
+      <p className="mt-1 px-0.5 font-mono text-micro text-ps-text-faint">
+        Prompt hints only. Runtime tools come from the profile&apos;s own toolset policy.
+      </p>
+    </div>
+  );
+}
+
 export function MissionComposerActions({
   editingId,
   missions,
   formState,
   onSubmit,
   onSaveAsTemplate,
+  overwriteTemplateName = null,
   onClose,
   dispatching,
   dispatchAcknowledged = true,
@@ -210,6 +288,7 @@ export function MissionComposerActions({
   | "formState"
   | "onSubmit"
   | "onSaveAsTemplate"
+  | "overwriteTemplateName"
   | "onClose"
   | "dispatching"
   | "dispatchAcknowledged"
@@ -237,12 +316,16 @@ export function MissionComposerActions({
     needsDispatchAck,
   });
   // A spinner already says "submitting". A tooltip repeating it is noise.
-  const blockerToShow = blocker && blocker.code !== "dispatching" ? blocker : null;
+  // The sentence waits until the person has started (T-0092, finding A). A
+  // requirement stated before anyone has typed reads as a scolding, and the
+  // button already carries the reason in its title while it is disabled.
+  const started = formState.newName.trim().length > 0 || formState.newInstruction.trim().length > 0;
+  const blockerToShow = blocker && blocker.code !== "dispatching" && started ? blocker : null;
 
   return (
     <div className="space-y-2">
       {blockerToShow && (
-        <p id={dispatchHintId} className="text-xs font-mono text-neon-orange/90">
+        <p id={dispatchHintId} className="text-micro font-mono text-neon-orange/90">
           {blockerToShow.message}
         </p>
       )}
@@ -251,15 +334,23 @@ export function MissionComposerActions({
           onClick={onSubmit}
           disabled={blocker !== null}
           loading={dispatching}
-          title={blockerToShow?.message}
+          title={blocker && blocker.code !== "dispatching" ? blocker.message : undefined}
           aria-describedby={blockerToShow ? dispatchHintId : undefined}
         >
           <Send className="w-3.5 h-3.5" />
           {submitLabel}
         </Button>
         {formState.newInstruction.trim() && (
-          <Button variant="secondary" onClick={onSaveAsTemplate}>
-            <Save className="w-3.5 h-3.5" /> Save as Template
+          // Two clicks when the name already exists: the first arms this
+          // button with the template it would overwrite, the second writes.
+          <Button
+            variant="secondary"
+            onClick={onSaveAsTemplate}
+            data-armed={overwriteTemplateName ? "true" : undefined}
+            className={overwriteTemplateName ? "ring-1 ring-neon-orange/60 text-neon-orange" : undefined}
+          >
+            <Save className="w-3.5 h-3.5" />{" "}
+            {overwriteTemplateName ? `Overwrite "${overwriteTemplateName}"?` : "Save as template"}
           </Button>
         )}
         <Button variant="ghost" onClick={onClose}>
@@ -285,6 +376,7 @@ export default function MissionCreateForm({
   onRetryCategories,
   onSubmit,
   onSaveAsTemplate,
+  overwriteTemplateName = null,
   onClose,
   dispatching,
   dispatchAcknowledged = false,
@@ -350,32 +442,32 @@ export default function MissionCreateForm({
   const inner = (
     <div className="space-y-4">
       {editingId && isReDispatch && (
-        <div className="rounded-lg bg-neon-cyan/5 border border-neon-cyan/20 p-3 text-xs text-neon-cyan/80 font-mono">
+        <EditNotice tone="info">
           A new mission will be created and dispatched immediately with your
           changes. The previous mission record will be kept for history.
-        </div>
+        </EditNotice>
       )}
       {editingId && isRunningEdit && (
-        <div className="rounded-lg bg-neon-orange/5 border border-neon-orange/20 p-3 text-xs text-neon-orange/90 font-mono">
+        <EditNotice tone="warn">
           Updates apply to this running mission. Linked cron jobs sync when
           schedule, profile, model, or prompt fields change.
-        </div>
+        </EditNotice>
       )}
       {editingId && isDraftEdit && (
-        <div className="rounded-lg bg-white/5 border border-white/10 p-3 text-xs text-ps-text-muted font-mono">
+        <EditNotice tone="neutral">
           This mission is a draft. Choose how to run it in Dispatch — save,
           queue for when the agent is idle, run now, or schedule.
-        </div>
+        </EditNotice>
       )}
       {editingId && isQueuedEdit && (
-        <div className="rounded-lg bg-neon-orange/5 border border-neon-orange/20 p-3 text-xs text-neon-orange/90 font-mono">
+        <EditNotice tone="warn">
           This mission is waiting in the queue. You can update fields, dispatch
           immediately, or move it back to drafts.
-        </div>
+        </EditNotice>
       )}
 
       {(categoriesLoadError || categories.length === 0) && (
-        <p className="text-xs font-mono text-neon-orange/90 bg-neon-orange/5 border border-neon-orange/20 rounded-lg px-3 py-2">
+        <p className="text-micro font-mono text-status-warn">
           {categoriesLoadError ??
             "No categories loaded — run npm run db:migrate or restart PatterStage, then"}{" "}
           {onRetryCategories && (
@@ -411,11 +503,12 @@ export default function MissionCreateForm({
 
       <div>
         <ComposerFieldLabel>Mission Name</ComposerFieldLabel>
-        <input
+        <Input
           value={formState.newName}
           onChange={(e) => setFormField("newName", e.target.value)}
-          placeholder="e.g., Research quantum computing trends" aria-label="e.g., Research quantum computing trends"
-          className="w-full h-9 bg-dark-800/50 border border-white/10 rounded-lg px-3 text-sm text-white placeholder-white/20 outline-none focus:border-neon-cyan/50 font-mono"
+          placeholder="e.g., Research quantum computing trends"
+          aria-label="Mission name"
+          className="font-mono"
         />
       </div>
 
@@ -437,18 +530,61 @@ export default function MissionCreateForm({
           onChange={(v) => setFormField("newGoals", v)}
           minRows={2}
           maxRows={8}
-          placeholder="Gather data&#10;Analyze findings&#10;Write report"
+          placeholder="e.g. Gather data"
         />
-        <p className="text-xs text-ps-text-faint font-mono mt-1.5">
+        <p className="text-micro text-ps-text-faint font-mono mt-1.5">
           One goal per line — checklist the agent completes alongside the task.
         </p>
       </div>
 
       <ComposerAccordion
+        title="Dispatch"
+        description="When and how this mission runs"
+        defaultOpen={DISPATCH_OPEN_BY_DEFAULT}
+        step={1}
+        accent="green"
+        // Both directions, not just the open one: collapsing the choice
+        // withdraws the acknowledgement, and the gate returns.
+        onOpenChange={(open) => onDispatchOpenChange?.(open)}
+      >
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          {DISPATCH_MODES.map((mode) => (
+            <button
+              key={mode.id}
+              type="button"
+              onClick={() => setFormField("newDispatch", mode.id)}
+              className={`h-9 px-3 rounded-ps-md text-micro font-mono border transition-colors ${
+                formState.newDispatch === mode.id
+                  ? "border-neon-cyan/50 bg-neon-cyan/10 text-neon-cyan"
+                  : "border-ps-edge text-ps-text-muted hover:text-ps-text-secondary"
+              }`}
+            >
+              {mode.label}
+            </button>
+          ))}
+        </div>
+        <p className="text-micro text-ps-text-muted font-mono">
+          The button below runs the selected dispatch mode.
+        </p>
+        {formState.newDispatch === "cron" && (
+          <SchedulePicker
+            value={formState.newSchedule}
+            onChange={(s) => setFormField("newSchedule", s)}
+            // The `error` prop has always existed here and was never passed, so
+            // the picker's own complaint was the only copy and it died with the
+            // sheet. Passing it makes the reason survive a blocked submit
+            // independently of whether the field was ever blurred.
+            error={scheduleDraftError}
+            onDraftError={onScheduleDraftError}
+          />
+        )}
+      </ComposerAccordion>
+
+      <ComposerAccordion
         title="Mission parameters"
         description="Directories, references, skills, context, output, and constraints"
         defaultOpen={false}
-        step={1}
+        step={2}
         accent="cyan"
       >
         <div>
@@ -461,10 +597,7 @@ export default function MissionCreateForm({
               onAdd={addLocalDirFromDraft}
             />
             {formState.newLocalDirs.map((dir, i) => (
-              <div
-                key={`${dir.path}-${i}`}
-                className="rounded-lg border border-neon-cyan/15 bg-dark-800/30 px-2 py-2"
-              >
+              <Card key={`${dir.path}-${i}`} variant="raised" padding="none" className="px-2 py-2">
                 <LocalDirRow
                   mode="saved"
                   entry={dir}
@@ -483,7 +616,7 @@ export default function MissionCreateForm({
                     )
                   }
                 />
-              </div>
+              </Card>
             ))}
           </div>
         </div>
@@ -492,29 +625,30 @@ export default function MissionCreateForm({
           <ComposerFieldLabel>References</ComposerFieldLabel>
           <div className="space-y-1.5">
             {formState.newReferences.map((ref, i) => (
-              <div
+              <Card
                 key={i}
-                className="flex items-center gap-2 bg-dark-800/50 border border-neon-pink/20 rounded-lg px-3 py-1.5 h-9"
+                variant="raised"
+                padding="none"
+                className="flex items-center gap-2 px-3 py-1.5"
               >
-                <span className="text-xs font-mono text-neon-pink truncate flex-1">
+                <span className="text-micro font-mono text-neon-pink truncate flex-1">
                   {ref}
                 </span>
-                <button
-                  type="button"
+                <IconButton
+                  icon={X}
+                  label={`Remove reference ${ref}`}
+                  size="sm"
                   onClick={() =>
                     setFormField(
                       "newReferences",
                       formState.newReferences.filter((_, j) => j !== i),
                     )
                   }
-                  className="text-ps-text-muted hover:text-red-400 text-xs"
-                >
-                  ×
-                </button>
-              </div>
+                />
+              </Card>
             ))}
             <div className="flex items-center gap-2">
-              <input
+              <Input
                 value={formState.referenceInput}
                 onChange={(e) =>
                   setFormField("referenceInput", e.target.value)
@@ -525,23 +659,25 @@ export default function MissionCreateForm({
                     addReferenceFromInput();
                   }
                 }}
-                placeholder="URL, doc path..." aria-label="URL, doc path"
-                className="flex-1 h-9 bg-dark-800/50 border border-white/10 rounded-lg px-3 text-xs text-white placeholder-white/20 outline-none focus:border-neon-pink/50 font-mono"
+                placeholder="URL, doc path..."
+                aria-label="Reference to add"
+                className="flex-1 font-mono"
               />
-              <button
-                type="button"
+              <Button
+                variant="primary"
+                color="pink"
+                className="shrink-0"
                 onClick={addReferenceFromInput}
-                className="h-9 px-3 rounded-lg bg-neon-pink/10 border border-neon-pink/30 text-xs text-neon-pink font-mono shrink-0"
               >
                 + Add
-              </button>
+              </Button>
             </div>
           </div>
         </div>
 
         <div>
           <ComposerFieldLabel>Recommend agent skills</ComposerFieldLabel>
-          <SkillSelector
+          <SkillsPicker
             value={formState.newSkills}
             onChange={(skills) => setFormField("newSkills", skills)}
             profileId={formState.newProfile}
@@ -551,7 +687,7 @@ export default function MissionCreateForm({
 
         <div>
           <ComposerFieldLabel>Recommend Hermes toolsets</ComposerFieldLabel>
-          <ToolsetSelector
+          <ToolsetsPicker
             value={formState.newToolsets}
             onChange={(toolsets) => setFormField("newToolsets", toolsets)}
             profileId={formState.newProfile}
@@ -597,7 +733,7 @@ export default function MissionCreateForm({
         title="Runtime"
         description="Profile, model, scope, and timeout"
         defaultOpen={false}
-        step={2}
+        step={3}
         accent="purple"
       >
         <AgentRuntimeDefaultsCard
@@ -622,7 +758,7 @@ export default function MissionCreateForm({
         title="Assembled agent prompt"
         description="Preview of the mission prompt sent to the agent"
         defaultOpen={false}
-        step={3}
+        step={4}
         accent="pink"
       >
         <MissionPromptPreview
@@ -640,48 +776,6 @@ export default function MissionCreateForm({
         />
       </ComposerAccordion>
 
-      <ComposerAccordion
-        title="Dispatch"
-        description="When and how this mission runs"
-        defaultOpen={DISPATCH_OPEN_BY_DEFAULT}
-        step={4}
-        accent="green"
-        // Both directions, not just the open one: collapsing the choice
-        // withdraws the acknowledgement, and the gate returns.
-        onOpenChange={(open) => onDispatchOpenChange?.(open)}
-      >
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-          {DISPATCH_MODES.map((mode) => (
-            <button
-              key={mode.id}
-              type="button"
-              onClick={() => setFormField("newDispatch", mode.id)}
-              className={`h-9 px-3 rounded-lg text-xs font-mono border transition-colors ${
-                formState.newDispatch === mode.id
-                  ? "border-neon-cyan/50 bg-cyan-500/10 text-neon-cyan"
-                  : "border-white/10 text-ps-text-muted hover:text-ps-text-secondary"
-              }`}
-            >
-              {mode.label}
-            </button>
-          ))}
-        </div>
-        <p className="text-xs text-ps-text-muted font-mono">
-          The button below runs the selected dispatch mode.
-        </p>
-        {formState.newDispatch === "cron" && (
-          <SchedulePicker
-            value={formState.newSchedule}
-            onChange={(s) => setFormField("newSchedule", s)}
-            // The `error` prop has always existed here and was never passed, so
-            // the picker's own complaint was the only copy and it died with the
-            // sheet. Passing it makes the reason survive a blocked submit
-            // independently of whether the field was ever blurred.
-            error={scheduleDraftError}
-            onDraftError={onScheduleDraftError}
-          />
-        )}
-      </ComposerAccordion>
 
       {!embedded && (
         <MissionComposerActions
@@ -690,6 +784,7 @@ export default function MissionCreateForm({
           formState={formState}
           onSubmit={onSubmit}
           onSaveAsTemplate={onSaveAsTemplate}
+          overwriteTemplateName={overwriteTemplateName}
           onClose={onClose}
           dispatching={dispatching}
           dispatchAcknowledged={dispatchAcknowledged}
@@ -703,11 +798,11 @@ export default function MissionCreateForm({
   }
 
   return (
-    <div className="rounded-xl border border-neon-cyan/20 bg-dark-900/50 p-4 mb-6">
-      <h3 className="text-sm font-mono text-neon-cyan uppercase tracking-widest mb-4">
+    <Card className="mb-6">
+      <h3 className={sectionHeadingClasses}>
         {editingId ? "Edit Mission" : "New Mission"}
       </h3>
       {inner}
-    </div>
+    </Card>
   );
 }

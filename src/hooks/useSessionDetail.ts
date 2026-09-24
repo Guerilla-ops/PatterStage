@@ -9,29 +9,30 @@
 
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
-
-import { safeApiCall } from "@/lib/api-fetch";
+import { useApiResource } from "@/hooks/useApiResource";
 import type { SessionData } from "@/components/session/MessageBubble";
 
-async function fetchSessionDetail(id: string): Promise<SessionData> {
-  const res = await safeApiCall<{ data?: SessionData }>(
-    `/api/sessions/${encodeURIComponent(id)}`,
-  );
-  if (!res.ok || !res.data?.data) throw new Error(res.error ?? "Failed to load session");
-  return res.data.data;
+export interface UseSessionDetailOptions {
+  /** Poll while the session is running; false or omitted when it is not. */
+  refetchIntervalMs?: number | false;
 }
 
-export function useSessionDetail(id: string) {
-  const query = useQuery({
-    queryKey: ["session", id],
-    queryFn: () => fetchSessionDetail(id),
+/**
+ * One session, by id, through the one hook (T-0129). The HTTP status rides on
+ * the hook's errorStatus, so the page can still tell a 404 from a failure.
+ */
+export function useSessionDetail(id: string, opts: UseSessionDetailOptions = {}) {
+  const query = useApiResource<SessionData>(`/api/sessions/${encodeURIComponent(id)}`, {
+    select: (p) => (p as SessionData | null) ?? undefined,
+    errorMessage: "Failed to load session",
     enabled: !!id,
+    ...(opts.refetchIntervalMs !== undefined ? { refetchInterval: opts.refetchIntervalMs } : {}),
   });
   return {
-    data: query.data ?? null,
+    data: query.data,
     isLoading: query.isLoading,
-    error: query.isError ? (query.error as Error).message : null,
+    error: query.error,
+    errorStatus: query.errorStatus,
     refetch: query.refetch,
   };
 }

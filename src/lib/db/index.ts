@@ -5,10 +5,7 @@
 //
 // Relocated from src/lib/db.ts by operator ruling D8 (2026-08-22), so
 // the connection module sits inside the directory that already holds
-// the migration chain it runs. Every `@/lib/db` import is byte-identical
-// across the move; only this file's own relative specifiers changed,
-// and `resolveMigrationsDir`'s __dirname candidate, which now resolves
-// to the same absolute path from one directory deeper.
+// the migration chain it runs.
 //
 // Three statements remain in this file, and all three are plumbing:
 // the connection module's own work, not any table's business.
@@ -22,30 +19,20 @@
 //     schema. There is no repository to route it through, because
 //     until it has run there are no tables to have one.
 //
-// Everything else that used to live here has gone to a repository:
-// getGatewayPlatforms to sync/sync-repository.ts, and getSchemaHealth's
-// two mission_categories statements to
-// missions/mission-category-schema-repository.ts (which takes an open
-// handle rather than calling getDb, so nothing cycles back through
-// this module).
-//
-// The three are no longer counted by `sql-outside-repository`, because
-// src/lib/db/ is exempt by location. They were not deleted and they did
-// not move behind a seam; the file moved into the exempt directory by a
-// sanctioned ruling, and this comment is where that is written down so
-// the drop in the count is not mistaken for a migration.
+// src/lib/db/ is exempt from `sql-outside-repository` by location, so
+// the three are not counted; they were not moved behind a seam.
 // ═══════════════════════════════════════════════════════════════
 
 import Database, { type Database as _DatabaseType } from "better-sqlite3";
 import { join } from "path";
-import { existsSync, readFileSync } from "fs";
-import { PS_DATA_DIR, getDbPath } from "../paths";
+import { existsSync, readFileSync, readdirSync, statSync } from "fs";
+import { PS_DATA_DIR, getDbPath } from "../host/paths";
 import { getSchemaVersion, setSchemaVersion } from "../db-schema";
 import {
   countMissionCategories,
   missionCategoriesTableExists,
 } from "../missions/mission-category-schema-repository";
-import { ensureDir } from "../fs/fs-helpers";
+import { OWNER_ONLY_DIR, OWNER_ONLY_FILE, ensureDir, restrictToOwner } from "../fs/fs-helpers";
 import { needsBaselineRebuild, rebuildToBaseline } from "./upgrade";
 import { applyProfilesToolsParityUpgrade } from "./apply-profiles-tools-upgrade";
 import { applyMissionRepeatMigration } from "./apply-mission-repeat-migration";
@@ -53,15 +40,30 @@ import { applyMissionQueueMigration } from "./apply-mission-queue-migration";
 import { applyCronScheduleCanonicalisation } from "./apply-cron-schedule-canonicalisation";
 import { applyRunsSchedulesMigration } from "./apply-runs-schedules-migration";
 import { applyLegacyColumnRepair } from "./apply-legacy-column-repair";
-import { applyDropGameTablesMigration } from "./apply-drop-game-tables-migration";
-import { applyAnalyticsEventsMigration } from "./apply-analytics-events-migration";
-import { applyChatMigration } from "./apply-chat-migration";
-import { applyBenchmarksMigration } from "./apply-benchmarks-migration";
+// The seventeen one-file migrations, as a table (T-0129).
+import {
+  applyDropGameTablesMigration,
+  applyAnalyticsEventsMigration,
+  applyChatMigration,
+  applyBenchmarksMigration,
+  applyBenchmarkCatalogMigration,
+  applyDeepResearchMigration,
+  applyArtifactsMigration,
+  applyRecroomLibraryMigration,
+  applyAgentProgressionMigration,
+  applyRetentionMigration,
+  applySpendPolicyMigration,
+  applyResearchUsageMigration,
+  applyResearchGatherMigration,
+  applyOperatorPrefsMigration,
+  applyModelsOriginMigration,
+  applyRunsSpendSourceMigration,
+  applyScheduleKindMigration,
+  applyFallbackIdentityMigration,
+} from "./sql-migrations";
 import { applyBenchmarkConfigMigration } from "./apply-benchmark-config-migration";
-import { applyBenchmarkCatalogMigration } from "./apply-benchmark-catalog-migration";
 import { applyBenchGatewaysMigration } from "./apply-bench-gateways-migration";
 import { applyMissionPhasesMigration } from "./apply-mission-phases-migration";
-import { applyDeepResearchMigration } from "./apply-deep-research-migration";
 import { applyRetireMissionPhasesMigration } from "./apply-retire-mission-phases-migration";
 import { applyComposerMigration } from "./apply-composer-migration";
 import { applyMemoryProvidersMigration } from "./apply-memory-providers-migration";
@@ -70,21 +72,18 @@ import { applyModelsApiStyleMigration } from "./apply-models-api-style-migration
 import { applyResearchComposerLinkMigration } from "./apply-research-composer-link-migration";
 import { applyComposerGroupLinkMigration } from "./apply-composer-group-link-migration";
 import { applyFrameworksMigration } from "./apply-frameworks-migration";
-import { applyArtifactsMigration } from "./apply-artifacts-migration";
-import { applyRecroomLibraryMigration } from "./apply-recroom-library-migration";
 import { applyNeutralColumnNames } from "./apply-neutral-column-names";
-import { applyAgentProgressionMigration } from "./apply-agent-progression-migration";
-import { applyRetentionMigration } from "./apply-retention-migration";
-import { applySpendPolicyMigration } from "./apply-spend-policy-migration";
-import { applyResearchUsageMigration } from "./apply-research-usage-migration";
 import { applyComposerRejectedMigration } from "./apply-composer-rejected-migration";
-import { applyResearchGatherMigration } from "./apply-research-gather-migration";
 import { applyComposerNodeCancelledMigration } from "./apply-composer-node-cancelled-migration";
 
 // ── Ensure data directory exists ───────────────────────────────
 
 const dataDir = PS_DATA_DIR;
 ensureDir(dataDir);
+// The directory holds the database and the access token. setup.sh and
+// ensureAuthToken both create it, so narrowing it here covers a dir either of
+// them made at the default umask, without a second boot step (critic-03b).
+restrictToOwner(dataDir, OWNER_ONLY_DIR);
 
 const DB_PATH = getDbPath(dataDir);
 
@@ -92,11 +91,54 @@ const DB_PATH = getDbPath(dataDir);
 
 let _db: Database.Database | null = null;
 
+/**
+ * Narrow the database copies an older install left lying in the data directory.
+ *
+ * Narrowing the live database only helps the live database. Every migration
+ * path here leaves a WHOLE database beside it — `.pre-baseline-<ts>` from a
+ * baseline rebuild, `.pre-migrate-<ts>.bak` from the deploy runner, and the S1
+ * hotfix's own — and on an install made before this batch each was written at
+ * the default umask, which on a shared Linux box is world-readable. A `-wal` or
+ * `-shm` left by an unclean shutdown is the same case: SQLite reuses the mode
+ * of a file it finds and only creates one at the database's mode.
+ *
+ * So the mode arguments elsewhere cover what is written from now on, and this
+ * covers what is already there. It runs once, at the first open, and swallows
+ * everything: a copy owned by another account is the operator's to fix, not a
+ * reason to fail a boot.
+ */
+function restrictExistingDatabaseFiles(dir: string): void {
+  if (process.platform === "win32") return;
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    // Every spelling of "a database or one of its sidecars": name.db, name.db-wal,
+    // name.db.pre-baseline-<ts>, name.db.pre-migrate-<ts>.bak. Nothing else in
+    // the directory matches, and a directory that did would be skipped below.
+    if (!/\.db($|[.-])/.test(name)) continue;
+    const path = join(dir, name);
+    try {
+      if (!statSync(path).isFile()) continue;
+    } catch {
+      continue;
+    }
+    restrictToOwner(path, OWNER_ONLY_FILE);
+  }
+}
+
 /** Open (or reuse) the SQLite database connection. Runs migrations on first open. */
 export function getDb(): Database.Database {
   if (_db) return _db;
 
   _db = new Database(DB_PATH);
+  // SQLite creates -wal and -shm with the database's own mode, so narrowing the
+  // database before WAL is enabled narrows all three.
+  restrictToOwner(DB_PATH, OWNER_ONLY_FILE);
+  restrictExistingDatabaseFiles(dataDir);
   _db.pragma("journal_mode = WAL");
   _db.pragma("foreign_keys = ON");
   _db.pragma("busy_timeout = 5000");
@@ -123,10 +165,7 @@ export function getDb(): Database.Database {
 
 // ── Shorthand helpers ─────────────────────────────────────────
 
-/**
- * Wrap `fn` in a SQLite transaction. Commits on success, rolls back on throw.
- * shorthand for `getDb().transaction(fn)()`.
- */
+/** Wrap `fn` in a SQLite transaction. Commits on success, rolls back on throw. */
 export function inTransaction<T>(fn: () => T): T {
   const database = getDb();
   return database.transaction(fn)();
@@ -204,6 +243,7 @@ export function runMigrations(database: Database.Database): void {
     _db = null;
     _bootstrapped = false;
     const reopened = new Database(DB_PATH);
+    restrictToOwner(DB_PATH, OWNER_ONLY_FILE);
     reopened.pragma("journal_mode = WAL");
     reopened.pragma("foreign_keys = ON");
     reopened.pragma("busy_timeout = 5000");
@@ -277,7 +317,7 @@ export function runMigrations(database: Database.Database): void {
   // Story Weaver reusable character + theme library. CREATE at v29.
   applyRecroomLibraryMigration(database, migrationsDir);
 
-  // agent_root.framework_md -> framework_md, cron_jobs.external_job_id ->
+  // agent_root.hermes_md -> framework_md, cron_jobs.external_job_id ->
   // external_job_id. RENAME at v30.
   applyNeutralColumnNames(database);
 
@@ -324,6 +364,27 @@ export function runMigrations(database: Database.Database): void {
   // the deliberate act it is rather than as a crash. One table: composer_runs
   // has admitted `cancelled` since 021. REBUILD at v37.
   applyComposerNodeCancelledMigration(database, migrationsDir);
+
+  // What the operator has set about the console itself (the rail collapsed,
+  // quests done, the guide hidden), one JSON value per allow-listed key, so it
+  // survives a browser and retention cannot un-complete a quest. CREATE at v38.
+  applyOperatorPrefsMigration(database, migrationsDir);
+
+  // Where a model row came from, and what the last import wrote into it, so an
+  // operator's rename or proxy base URL is not undone by the next import.
+  // ALTER at v39.
+  applyModelsOriginMigration(database, migrationsDir);
+  // T-0108: runs.story_id and runs.spend_source, so a run row says which
+  // feature spent the money.
+  applyRunsSpendSourceMigration(database, migrationsDir);
+  // T-0107: schedules.kind and schedules.script_name, so a schedule row can
+  // name a host script and PatterStage's own tick can run it where the host
+  // has no crontab.
+  applyScheduleKindMigration(database, migrationsDir);
+  // LAST rung, T-0140: model_fallbacks.custom_name, custom_provider and
+  // custom_model_id, so a custom fallback keeps what the operator typed
+  // instead of reading Custom from a JOIN it has no row in.
+  applyFallbackIdentityMigration(database, migrationsDir);
 }
 
 // ── Bootstrap: ensure DB + schema exist ───────────────────────

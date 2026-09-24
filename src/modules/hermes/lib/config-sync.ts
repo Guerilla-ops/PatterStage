@@ -28,19 +28,26 @@
 import { existsSync, readFileSync } from "fs";
 import * as yaml from "js-yaml";
 
-import { dumpYamlConfig } from "@/lib/yaml-config";
+import { dumpYamlConfig } from "@/lib/config/yaml-config";
 import { getActiveHermesPaths } from "./agent-runtime";
-import { AUXILIARY_TASK_TYPES } from "@/lib/models/task-types";
-import { updateAgentRoot } from "@/lib/agent-root-repository";
-import { getModelDefaults, getModel } from "@/lib/models-repository";
-import { toError } from "@/lib/api-fetch";
+import { AUXILIARY_TASK_TYPES, type TaskType } from "@/lib/models/task-types";
+
+/** Which slots the caller has just emptied, and therefore which ones this
+ *  write may remove from config.yaml. Anything not named here is left
+ *  alone, so a primary the CLI set survives an empty registry. */
+export interface SyncDefaultsOptions {
+  cleared?: TaskType[];
+}
+import { updateAgentRoot } from "@/lib/agents/agent-root-repository";
+import { getModelDefaults, getModel } from "@/lib/models/models-repository";
+import { toError } from "@/lib/api/api-fetch";
 import { ensureDir } from "@/lib/fs/fs-helpers";
 import {
   loadHermesConfigFromString,
   type AuxiliarySection,
   type HermesConfig,
 } from "./hermes-config-read";
-import { backupFile, writeHermesConfigFile } from "./hermes-config-write";
+import { backupFile, findLatestParseableBackup, writeHermesConfigFile } from "./hermes-config-write";
 
 /** Auxiliary slots written through to `auxiliary.<task>.*`.
  *  See `AUXILIARY_TASK_TYPES` in `@/lib/models/task-types` (canonical). */
@@ -53,8 +60,17 @@ import { backupFile, writeHermesConfigFile } from "./hermes-config-write";
  *
  * `model.api_key` and `auxiliary.<task>.api_key` are reset to the empty
  * string so Hermes resolves the key from .env (canonical posture).
+ *
+ * `cleared` names the slots the caller has just emptied. Only those are
+ * removed from the file. The removal has to be explicit: "absent in the
+ * database, so delete it from the yaml" would let finalizeRootConfigOnDisk,
+ * which runs after every profile push, strip a primary that `hermes model`
+ * set on any install whose registry is empty, which is every fresh one
+ * (T-0100, D9).
  */
-export function syncDefaultsToHermesConfig(): { backupPath: string | null } {
+export function syncDefaultsToHermesConfig(
+  options: SyncDefaultsOptions = {},
+): { backupPath: string | null; error?: string } {
   const paths = getActiveHermesPaths();
   ensureDir(paths.root);
   const configPath = paths.config;
@@ -73,13 +89,26 @@ export function syncDefaultsToHermesConfig(): { backupPath: string | null } {
     // yaml.load throws and we cannot safely write a merged config. Report the
     // backing error so it surfaces in server logs but do NOT write a corrupted
     // file — return the backup path so the caller can surface a meaningful error.
-    const msg = toError(err).message || String(err);
+    const msg = (toError(err).message || String(err)).split(String.fromCharCode(10))[0].trim();
     console.error(`[syncDefaultsToHermesConfig] yaml.load failed: ${msg} — not overwriting ${configPath}`);
     console.error(`[syncDefaultsToHermesConfig] Backup at: ${backupPath}. Please repair the YAML and retry.`);
-    return { backupPath };
+    // The refusal used to be indistinguishable from success in the return
+    // value — which is exactly how a corrupt file kept round-tripping:
+    // finalizeRootConfigOnDisk saw no error and copied the corrupt disk text
+    // straight into agent_root.config_yaml (T-0086).
+    const restorable = findLatestParseableBackup(paths.backups);
+    return {
+      backupPath,
+      error:
+        `config.yaml did not parse (${msg}) — defaults not applied. ` +
+        (restorable
+          ? `Restore ${restorable} over config.yaml, then Pull from Hermes.`
+          : `Repair the YAML by hand, then Pull from Hermes.`),
+    };
   }
 
   const defaults = getModelDefaults();
+  const cleared = new Set<TaskType>(options.cleared ?? []);
 
   // ── Primary agent model
   const agentDefault = defaults.agent ? getModel(defaults.agent) : null;
@@ -92,13 +121,27 @@ export function syncDefaultsToHermesConfig(): { backupPath: string | null } {
       api_key: "",
       context_length: agentDefault.contextLength ?? config.model?.context_length,
     };
+  } else if (cleared.has("agent") && config.model) {
+    // The operator has just emptied the slot: take the primary off the file
+    // too, or Hermes keeps running the model the console says is gone.
+    delete config.model.default;
+    delete config.model.provider;
+    delete config.model.base_url;
+    delete config.model.api_key;
+    delete config.model.context_length;
+    if (Object.keys(config.model).length === 0) delete config.model;
   }
 
   // ── 11 auxiliary slots
   const aux: Record<string, AuxiliarySection> = { ...(config.auxiliary ?? {}) };
   for (const slot of AUXILIARY_TASK_TYPES) {
     const modelId = defaults[slot];
-    if (!modelId) continue;
+    if (!modelId) {
+      // The spread above carried the old entry over; a cleared slot is the one
+      // case where it should not survive.
+      if (cleared.has(slot)) delete aux[slot];
+      continue;
+    }
     const m = getModel(modelId);
     if (!m) continue;
     aux[slot] = {
@@ -111,6 +154,8 @@ export function syncDefaultsToHermesConfig(): { backupPath: string | null } {
   }
   if (Object.keys(aux).length > 0) {
     config.auxiliary = aux;
+  } else {
+    delete config.auxiliary;
   }
 
   const serialized = dumpYamlConfig(config);
@@ -123,6 +168,8 @@ export interface FinalizeRootConfigResult {
   /** Whether `model_defaults.agent` was applied to disk. */
   appliedModelDefaults: boolean;
   backupPath: string | null;
+  /** Set when the sync refused or the disk text failed to parse. */
+  error?: string;
 }
 
 /**
@@ -130,14 +177,36 @@ export interface FinalizeRootConfigResult {
  * to `model` / `auxiliary` on disk and refresh `agent_root.config_yaml` so the
  * next push does not strip the model section.
  */
-export function finalizeRootConfigOnDisk(): FinalizeRootConfigResult {
+export function finalizeRootConfigOnDisk(
+  options: SyncDefaultsOptions = {},
+): FinalizeRootConfigResult {
   const defaults = getModelDefaults();
   const appliedModelDefaults = Boolean(defaults.agent);
-  const { backupPath } = syncDefaultsToHermesConfig();
+  // `cleared` rides through, and the row refresh below is what stops a later
+  // agent-root Push putting the cleared primary back on disk from a stale copy.
+  const { backupPath, error } = syncDefaultsToHermesConfig(options);
+
+  // THE LOOP-CLOSER, removed (T-0086). This copy used to run unconditionally:
+  // the sync above would correctly REFUSE to touch a corrupt file, and then
+  // this function copied that same corrupt disk text into
+  // agent_root.config_yaml anyway — re-poisoning the row the next push would
+  // assemble from. A refusal now stops the copy, and even a successful sync
+  // parse-checks the disk before the row is updated, because the disk is a
+  // file anything on the machine can write.
+  if (error) {
+    return { appliedModelDefaults: false, backupPath, error };
+  }
 
   const paths = getActiveHermesPaths();
   if (existsSync(paths.config)) {
     const fullYaml = readFileSync(paths.config, "utf-8");
+    try {
+      yaml.load(fullYaml);
+    } catch (err) {
+      const msg = (toError(err).message || String(err)).split(String.fromCharCode(10))[0].trim();
+      console.error(`[finalizeRootConfigOnDisk] disk config.yaml does not parse (${msg}) — leaving agent_root.config_yaml alone`);
+      return { appliedModelDefaults, backupPath, error: `disk config.yaml did not parse (${msg})` };
+    }
     updateAgentRoot({ configYaml: fullYaml });
   }
 
@@ -151,13 +220,31 @@ export function finalizeRootConfigOnDisk(): FinalizeRootConfigResult {
  * for a single model, leaving auxiliary slots untouched.
  * Used by the per-model Push button.
  */
-export function syncSingleModelToHermesConfig(modelId: string): { backupPath: string | null } {
+export function syncSingleModelToHermesConfig(modelId: string): { backupPath: string | null; error?: string } {
   const paths = getActiveHermesPaths();
   const configPath = paths.config;
   const backupPath = backupFile(configPath, paths.backups);
 
   const original = existsSync(configPath) ? readFileSync(configPath, "utf-8") : "";
-  const config: HermesConfig = loadHermesConfigFromString(original);
+  // Refuse-and-report, like the sibling above. This used to throw — the one
+  // config writer with no handler — so the per-model Push button answered a
+  // bare 500 on an already-corrupt file instead of the repair guidance every
+  // other path gives (T-0086).
+  let config: HermesConfig;
+  try {
+    config = loadHermesConfigFromString(original);
+  } catch (err) {
+    const msg = (toError(err).message || String(err)).split(String.fromCharCode(10))[0].trim();
+    const restorable = findLatestParseableBackup(paths.backups);
+    return {
+      backupPath,
+      error:
+        `config.yaml did not parse (${msg}) — model not pushed. ` +
+        (restorable
+          ? `Restore ${restorable} over config.yaml, then retry.`
+          : `Repair the YAML by hand, then retry.`),
+    };
+  }
 
   const model = getModel(modelId);
   if (model) {

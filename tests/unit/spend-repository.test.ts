@@ -20,19 +20,14 @@ import { join } from "path";
 import type DatabaseNs from "better-sqlite3";
 import { execBaselineSchema } from "../helpers/baseline-db";
 import { applyComposerMigration } from "@/lib/db/apply-composer-migration";
-import { applyDeepResearchMigration } from "@/lib/db/apply-deep-research-migration";
-import { applySpendPolicyMigration } from "@/lib/db/apply-spend-policy-migration";
-import { applyResearchUsageMigration } from "@/lib/db/apply-research-usage-migration";
+import { applyDeepResearchMigration, applySpendPolicyMigration, applyResearchUsageMigration } from "@/lib/db/sql-migrations";
 
 type RealDb = DatabaseNs.Database;
 
 let testDb: RealDb | null = null;
 
-jest.mock("@/lib/db", () => ({
-  getDb: () => testDb!,
-  inTransaction: <T,>(fn: () => T) => testDb!.transaction(fn)(),
-  ensureDb: () => undefined,
-}));
+// eslint-disable-next-line @typescript-eslint/no-require-imports -- jest.mock factories are hoisted above imports; require is the hoisting-safe form
+jest.mock("@/lib/db", () => require("../helpers/baseline-db").dbSingletonMock(() => testDb));
 
 const Database = jest.requireActual(
   join(process.cwd(), "node_modules", "better-sqlite3", "lib", "index.js"),

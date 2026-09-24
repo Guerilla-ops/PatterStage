@@ -1,4 +1,5 @@
 /** @jest-environment node */
+/* eslint-disable @typescript-eslint/no-require-imports */
 
 // Mock filesystem before importing the route
 const mockExistsSync = jest.fn();
@@ -43,28 +44,13 @@ jest.mock("@/modules/hermes/lib/agent-runtime", () => ({
   })),
 }));
 
-jest.mock("@/lib/paths", () => ({
-  PS_DATA_DIR: "/tmp/ch-data",
-  PATHS: {
-    missions: "/tmp/ch-data/missions",
-    patterStageDb: "/tmp/ch-data/control-hub.db",
-    templates: "/tmp/ch-data/templates",
-    stories: "/tmp/ch-data/stories",
-    recroom: "/tmp/ch-data/recroom",
-    workspaces: "/tmp/ch-data/workspaces",
-    auditLog: "/tmp/ch-data/audit",
-    psScripts: "/tmp/ch-data/scripts",
-    psHardwareLogs: "/tmp/ch-data/logs",
-  },
-  getPsScriptsDir: () => "/tmp/ch-data/scripts",
-  getPsHardwareLogDir: () => "/tmp/ch-data/logs",
-}));
+jest.mock("@/lib/host/paths", () => require("../helpers/mocks").pathsMock());
 
-jest.mock("@/lib/api-logger", () => ({
+jest.mock("@/lib/api/api-logger", () => ({
   logApiError: jest.fn(),
   serverErrorFromCatch: jest.fn(
     (route: string, context: string, _error: unknown, message: string) => {
-      const { logApiError: log } = jest.requireMock("@/lib/api-logger") as {
+      const { logApiError: log } = jest.requireMock("@/lib/api/api-logger") as {
         logApiError: jest.Mock;
       };
       log(route, context, _error);
@@ -94,10 +80,10 @@ jest.mock("@/lib/fs/path-security", () => ({
   },
 }));
 
-jest.mock("@/lib/api-auth", () => ({
+jest.mock("@/lib/api/api-auth", () => ({
 }));
 
-jest.mock("@/lib/audit-log", () => ({
+jest.mock("@/lib/api/audit-log", () => ({
   appendAuditLine: jest.fn(),
 }));
 
@@ -119,11 +105,9 @@ const store = new Map<
   }
 >();
 
-jest.mock("@/lib/db", () => ({
-  ensureDb: jest.fn(),
-}));
+jest.mock("@/lib/db", () => require("../helpers/mocks").dbMock());
 
-jest.mock("@/lib/agent-root-repository", () => ({
+jest.mock("@/lib/agents/agent-root-repository", () => ({
   getAgentRoot: jest.fn(() => ({
     id: 1,
     displayName: "Bob",
@@ -211,6 +195,8 @@ jest.mock("@/modules/hermes/lib/profile-drift", () => ({
 
 jest.mock("@/modules/hermes/lib/profile-counts", () => ({
   countProfileSkills: jest.fn(() => 0),
+  // The list route counts the whole population with one catalogue read.
+  createProfileSkillsCounter: jest.fn(() => () => 0),
   countProfileToolsets: jest.fn(() => 0),
 }));
 
@@ -570,7 +556,7 @@ describe("the slug validator on the create path is unreachable, and that is the 
     // satisfies the validator, so the validator can never fire. Keeping the
     // check is right (it is a fence at a filesystem boundary); believing it
     // guards the create path is not.
-    const { slugifyDisplayName, isValidProfileSlug } = await import("@/lib/profile-slug");
+    const { slugifyDisplayName, isValidProfileSlug } = await import("@/lib/agents/profile-slug");
 
     for (const name of ["..", "../evil", "a/../b", ".hidden", "\u{1F680}", "!!!", "///"]) {
       expect(isValidProfileSlug(slugifyDisplayName(name))).toBe(true);

@@ -1,35 +1,35 @@
 /**
  * @jest-environment jsdom
  */
+/* eslint-disable @typescript-eslint/no-require-imports */
 /**
  * A PatterStage install with no memory provider running is a supported state.
  * The regression this pins: the list endpoint answers 503 when nothing is
  * listening, `hindsightGet` turns a non-2xx into `null`, and that null used to
  * land in the SUCCESS branch of loadRecentMemories. `health` stayed null, the
- * HealthBanner never rendered, and the page told a first-time user "No memories
+ * health banner never rendered, and the page told a first-time user "No memories
  * yet. Hermes will start storing them as you converse" while there was no
  * memory provider at all.
+ *
+ * Amended for T-0101: the sentence is still said, and still exactly once, but
+ * the browser no longer says it. It reports the health upward and the provider
+ * card at the top of the page renders it, inside the card carrying the host and
+ * port that fix it. The page is therefore what this file renders, and "exactly
+ * once" is now an assertion rather than a structural accident.
  */
 import "@testing-library/jest-dom";
-import { render, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
+// Reads go through useApiResource since T-0129, so the page wants a QueryClient.
+import { renderWithQuery } from "../helpers/render-with-query";
+import { jsonResponse } from "../helpers/fetch-map";
 
-import HindsightBrowser from "@/components/memory/HindsightBrowser";
+jest.mock("next/navigation", () => ({
+  usePathname: () => "/agent/memory",
+  useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
+}));
+jest.mock("@/components/layout/AppPageShell", () => require("../helpers/mocks").appPageShellMock());
 
-interface MinimalResponse {
-  ok: boolean;
-  status: number;
-  json: () => Promise<unknown>;
-  text: () => Promise<string>;
-}
-
-function jsonResponse(body: unknown, status = 200): MinimalResponse {
-  return {
-    ok: status >= 200 && status < 300,
-    status,
-    json: async () => body,
-    text: async () => JSON.stringify(body),
-  };
-}
+import MemoryPage from "@/app/agent/memory/page";
 
 const originalFetch = global.fetch;
 afterEach(() => {
@@ -56,19 +56,28 @@ function mockUnreachableProvider() {
   }) as unknown as typeof fetch;
 }
 
-describe("HindsightBrowser with no memory provider running", () => {
+describe("the Memory page with no memory provider running", () => {
   it("says nothing is answering instead of implying an empty store", async () => {
     mockUnreachableProvider();
-    render(<HindsightBrowser />);
+    renderWithQuery(<MemoryPage />);
 
     await waitFor(() => {
       expect(screen.getByText(/No memory provider is answering/i)).toBeInTheDocument();
     });
   });
 
+  it("says it once, on the card that carries the endpoint", async () => {
+    mockUnreachableProvider();
+    renderWithQuery(<MemoryPage />);
+
+    const said = await screen.findAllByText(/No memory provider is answering/i);
+    expect(said).toHaveLength(1);
+    expect(screen.getByRole("heading", { name: "Set up memory" })).toBeInTheDocument();
+  });
+
   it("never renders the 'Hindsight undefined' string on that banner", async () => {
     mockUnreachableProvider();
-    const { container } = render(<HindsightBrowser />);
+    const { container } = renderWithQuery(<MemoryPage />);
 
     await waitFor(() => {
       expect(screen.getByText(/No memory provider is answering/i)).toBeInTheDocument();

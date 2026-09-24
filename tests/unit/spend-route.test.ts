@@ -12,8 +12,9 @@ const getSpendSummary = jest.fn();
 const writeSpendPolicy = jest.fn();
 const readSpendPolicy = jest.fn();
 
-jest.mock("@/lib/db", () => ({ ensureDb: jest.fn() }));
-jest.mock("@/lib/api-auth", () => ({ requireAuth: jest.fn(() => null) }));
+// eslint-disable-next-line @typescript-eslint/no-require-imports -- jest.mock factories are hoisted above imports
+jest.mock("@/lib/db", () => require("../helpers/mocks").dbMock());
+jest.mock("@/lib/api/api-auth", () => ({ requireAuth: jest.fn(() => null) }));
 jest.mock("@/lib/spend/spend-summary", () => ({
   getSpendSummary: (...a: unknown[]) => getSpendSummary(...a),
 }));

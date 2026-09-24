@@ -9,7 +9,7 @@
 import { useMemo, useCallback } from "react";
 import { InlineSelect } from "@/components/ui/Select";
 import { CHAT_DEFAULT_MODEL } from "@/types/chat";
-import { formatModelName } from "@/lib/chat-utils";
+import { formatModelName } from "@/lib/chat/chat-utils";
 
 export interface ChatModelSelectorProps {
   model: string;
@@ -53,11 +53,11 @@ export function ChatModelSelector({
         onChange={onChange}
         options={mergedModels.map((m) => ({ value: m, label: displayModelName(m) }))}
         accentColor="purple"
-        className="w-[220px] text-xs"
+        className="w-[220px] text-body"
         disabled={modelsLoading}
       />
       {modelsError && (
-        <span className="text-xs text-neon-orange/90 font-mono" title={modelsError}>
+        <span className="text-micro text-neon-orange/90 font-mono" title={modelsError}>
           !
         </span>
       )}

@@ -16,10 +16,10 @@
 
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, ArrowUpRight } from "lucide-react";
 
-import { safeApiCallData } from "@/lib/api-fetch";
+import Card from "@/components/ui/Card";
+import { useApiResource } from "@/hooks/useApiResource";
 import { AGENT_INSTALL_DOCS } from "@/lib/dashboard/first-run-steps";
 import type { MonitorData } from "@/types/console";
 
@@ -28,27 +28,24 @@ interface AgentPresence {
   available: boolean;
 }
 
-async function fetchAgentPresence(): Promise<AgentPresence> {
-  const monitor = await safeApiCallData<MonitorData>("/api/monitor");
-  const framework = monitor?.framework;
-  // `undefined` means the monitor could not tell us, which is not the same as
-  // "absent" — say nothing rather than accuse a working install.
-  return { name: framework?.name ?? "Hermes", available: framework?.available !== false };
-}
 
 export default function AgentSetupNotice({ what }: { what: string }) {
-  const { data } = useQuery({
-    queryKey: ["agent-presence"],
-    queryFn: fetchAgentPresence,
+  // The monitor the dashboard polls, under the same key, so this costs no
+  // request of its own on a screen that already has it (T-0129).
+  const { data } = useApiResource<AgentPresence>("/api/monitor", {
+    select: (p) => {
+      const framework = (p as MonitorData | null)?.framework;
+      return { name: framework?.name ?? "Hermes", available: framework?.available !== false };
+    },
     staleTime: 60_000,
   });
 
   if (!data || data.available) return null;
 
   return (
-    <div className="mx-6 mt-4 flex items-start gap-3 rounded-xl border border-neon-orange/40 bg-neon-orange/10 px-4 py-3">
+    <Card padding="sm" className="mx-6 mt-4 flex items-start gap-3">
       <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-neon-orange" />
-      <div className="min-w-0 text-xs">
+      <div className="min-w-0 text-body">
         <p className="font-semibold text-neon-orange">{data.name} is not installed</p>
         <p className="mt-0.5 text-ps-text-secondary">
           {what} needs an agent on this machine. You can configure PatterStage now, but nothing will
@@ -58,11 +55,15 @@ export default function AgentSetupNotice({ what }: { what: string }) {
           href={AGENT_INSTALL_DOCS}
           target="_blank"
           rel="noreferrer noopener"
-          className="mt-1.5 inline-flex items-center gap-1 font-mono text-neon-orange hover:underline"
+          // min-h-6 is the 24px hit-target floor gate 8 enforces. Without it this
+          // link renders 128x21 on the Linux runner, where the mono line box is
+          // shorter, and the notice only appears on a machine with no agent
+          // installed, which is every runner and no developer box.
+          className="mt-1.5 inline-flex min-h-6 items-center gap-1 font-mono text-neon-orange hover:underline"
         >
           Install {data.name} <ArrowUpRight className="h-3 w-3" />
         </a>
       </div>
-    </div>
+    </Card>
   );
 }

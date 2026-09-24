@@ -8,17 +8,18 @@
 
 import { NextRequest, NextResponse } from "next/server";
 
-import { serverErrorFromError } from "@/lib/api-logger";
-import { badRequest, ok, serverErrorFromHelperResult } from "@/lib/api-response";
-import { getHostScheduler } from "@/lib/host-scheduler";
-import { parseJsonBody } from "@/lib/parse-json-body";
+import { serverErrorFromError } from "@/lib/api/api-logger";
+import { badRequest, ok, serverErrorFromHelperResult } from "@/lib/api/api-response";
+import { getHostScheduler } from "@/lib/host/host-scheduler";
+import { parseJsonBody } from "@/lib/api/parse-json-body";
+import { recordEvent } from "@/lib/analytics/record-event";
+import { SCRIPT_EXT_RE } from "@/lib/scripts/script-ext";
 
 import {
   canonicaliseScriptsCommand,
   rejectIfBadSchedule,
   resolveCronLogFile,
   sanitiseCronName,
-  SCRIPT_EXT_RE,
 } from "./crontab-command";
 import {
   joinCrontabLines,
@@ -123,6 +124,8 @@ export async function handleCreateHardwareCron(request: NextRequest): Promise<Ne
     if (!result.ok) {
       return serverErrorFromHelperResult(result, "unknown error");
     }
+
+    recordEvent("script.scheduled", { entityType: "script", entityId: canonical.scriptName, metadata: { schedule } });
 
     // Echo what was actually installed, not what was asked for.
     return ok({ id: entryId, schedule, command: canonical.command, name: safeName, logFile: resolvedLog });

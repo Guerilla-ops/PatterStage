@@ -20,13 +20,14 @@
 //   - Credentials are only created if a model for that provider exists
 
 import { createHash } from "crypto";
+import type { ModelIdentity } from "@/lib/models/model-types";
 import { existsSync, readFileSync } from "fs";
 import * as yaml from "js-yaml";
 
 import { getActiveHermesPaths } from "./agent-runtime";
 import { PROVIDER_ENV_VAR, isHermesProvider, type HermesProvider } from "./providers";
 import { TASK_TYPES, type TaskType } from "@/lib/models/task-types";
-import { parseEnvFile } from "@/lib/env-file";
+import { parseEnvFile } from "@/lib/config/env-file";
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -37,7 +38,7 @@ interface ParsedCredential {
   importKey: string;
 }
 
-interface ParsedModel {
+interface ParsedModel extends Omit<ModelIdentity, "provider"> {
   /**
    * Stable key used for upsert — SHA-256(provider + model_id), first 16 hex.
    * Used to detect "same model, already imported" across runs.
@@ -45,9 +46,6 @@ interface ParsedModel {
   importKey: string;
   name: string;
   provider: HermesProvider;
-  modelId: string;
-  baseUrl: string | null;
-  contextLength: number | null;
   /** Task types this model should be the default for. Empty = no defaults. */
   defaultSlots: TaskType[];
 }
@@ -72,12 +70,15 @@ function importKeyFor(provider: string, modelId: string): string {
 // ── Config YAML parser ───────────────────────────────────────
 
 /**
- * Shape of the `model:` section of `~/.hermes/config.yaml`. Exported
- * so consumers (e.g. the diff endpoint) don't redeclare the same
- * 4-field shape — the snake_case keys are stable on disk and the
- * field set is the canonical projection of what Hermes writes.
+ * Shape of the `model:` section of `~/.hermes/config.yaml`. The snake_case
+ * keys are stable on disk and the field set is the canonical projection of
+ * what Hermes writes.
+ *
+ * No longer exported: the diff endpoint was its one outside consumer, and
+ * after T-0100 it compares field by field against the parsed document rather
+ * than passing the section around.
  */
-export interface ConfigModelSection {
+interface ConfigModelSection {
   default?: string;
   provider?: string;
   base_url?: string;
@@ -206,12 +207,6 @@ function parseEnvCredentials(envPath: string): Map<HermesProvider, ParsedCredent
   if (!existsSync(envPath)) return byProvider;
 
   try {
-    // Shared parser promoted from `modules/hermes/lib/config-sync.ts:parseEnvFile` to
-    // `@/lib/env-file` in session 164 — same regex, same skip rules
-    // (blank lines, `#` comments, malformed lines), same `\r?\n` split.
-    // The two sites had drifted in 2026-05 to use the same regex
-    // independently; this is the first consolidation to a single source
-    // of truth.
     const envVars = parseEnvFile(readFileSync(envPath, "utf-8"));
 
     for (const [key, rawValue] of envVars) {

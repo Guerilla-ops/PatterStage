@@ -9,33 +9,10 @@ import {
   type RawMetrics,
 } from "@/lib/stats/derive";
 import { ICONS } from "@/components/achievements/AchievementBadge";
+import { COMPLETIONIST_EVENT_TYPES } from "@/lib/analytics/event-types";
+import { rawMetrics } from "../helpers/fixtures";
 
-const baseMetrics = (over: Partial<RawMetrics> = {}): RawMetrics => ({
-  completedMissions: 0,
-  failedMissions: 0,
-  completedRuns: 0,
-  totalTokens: 0,
-  stories: 0,
-  schedulesEnabled: 0,
-  scriptsEnabled: 0,
-  longestStreak: 0,
-  currentStreak: 0,
-  completionHours: [],
-  dispatchedMissions: 0,
-  maxMissionsInADay: 0,
-  chaptersGenerated: 0,
-  storiesCompleted: 0,
-  sessionsStarted: 0,
-  schedulesCreated: 0,
-  schedulesFired: 0,
-  skillToggles: 0,
-  personalityChanges: 0,
-  modelConfigs: 0,
-  chatMessages: 0,
-  distinctProfiles: 0,
-  distinctEventTypes: 0,
-  ...over,
-});
+const baseMetrics = (over: Partial<RawMetrics> = {}): RawMetrics => rawMetrics(over);
 
 describe("computeLevel", () => {
   it("starts at level 1 with the first title", () => {
@@ -125,7 +102,8 @@ describe("evaluateAchievements", () => {
     ["chatterbox", { chatMessages: 1000 }],
     ["cron-lord", { schedulesFired: 500 }],
     ["polyglot", { distinctProfiles: 3 }],
-    ["completionist", { distinctEventTypes: 14 }],
+    // The ledger, not the distinct count: one of each curated type (T-0098).
+    ["completionist", { eventCounts: Object.fromEntries(COMPLETIONIST_EVENT_TYPES.map((t) => [t, 1])) }],
   ])("unlocks the event-derived achievement %s at its threshold", (id, over) => {
     const a = evaluateAchievements(baseMetrics(over as Partial<RawMetrics>)).find((x) => x.id === id);
     expect(a?.unlocked).toBe(true);
@@ -164,6 +142,10 @@ describe("achievement scope", () => {
   it("marks the story achievements as Rec Room, not agent progression", () => {
     const recroom = ACHIEVEMENT_DEFS.filter((d) => achievementScope(d) === "recroom");
     expect(recroom.map((d) => d.id).sort()).toEqual([
+      // Curriculum is every quest, and chapter 6 of the programme is the Rec
+      // Room, so an agent scope would let a story written for fun move the
+      // Body's record (B17).
+      "curriculum",
       "epic-scribe",
       "novelist",
       "saga-weaver",

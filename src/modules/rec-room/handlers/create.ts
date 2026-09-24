@@ -6,33 +6,59 @@
 
 import { NextResponse } from "next/server";
 
-import { logApiError } from "@/lib/api-logger";
+import { logApiError } from "@/lib/api/api-logger";
 import { getStoryPrompt } from "@/modules/rec-room/lib/prompts";
-import { callLLM } from "@/lib/llm";
+import { callLLM } from "@/lib/models/llm";
 import { createStory, updateStory } from "@/modules/rec-room/lib/story-repository";
 import { recordEvent } from "@/lib/analytics/record-event";
 import type { StoryArc as StoryArcType, ChapterOutline } from "@/modules/rec-room/types";
 
-import { buildMasterPrompt, getChapterCount, safeArc, validateChapterOutput } from "./shared";
+import {
+  buildMasterPrompt,
+  getChapterCount,
+  normaliseMood,
+  safeArc,
+  storyModelId,
+  type StoryCallOptions,
+  validateChapterOutput,
+} from "./shared";
 
 import { chapterTitle } from "../lib/chapter-title";
 import { normaliseStoryCharacters } from "../lib/characters";
-export async function handleCreate(body: Record<string, unknown>): Promise<NextResponse> {
+export async function handleCreate(
+  body: Record<string, unknown>,
+  opts: StoryCallOptions = {},
+): Promise<NextResponse> {
   const { title, config } = body;
-  if (!config || !(config as Record<string, unknown>)?.premise) {
-    return NextResponse.json({ error: "Missing premise" }, { status: 400 });
+  // The boundary, whole (T-0087). T-0079 guarded characters; mood, title and
+  // premise sat one field away, cast and unguarded. A string mood crashed with
+  // an empty 500; an object title crashed on the SQLite bind; an object
+  // premise became "[object Object]" in the prompt.
+  if (!config || typeof config !== "object" || Array.isArray(config)) {
+    return NextResponse.json({ error: "config must be an object with a premise" }, { status: 400 });
+  }
+  const rawCfg = config as Record<string, unknown>;
+  if (typeof rawCfg.premise !== "string" || !rawCfg.premise.trim()) {
+    return NextResponse.json({ error: "Missing premise (it must be text)" }, { status: 400 });
+  }
+  if (title !== undefined && title !== null && typeof title !== "string") {
+    return NextResponse.json({ error: "title must be text" }, { status: 400 });
   }
 
-  const cfg = config as Record<string, unknown>;
+  const cfg: Record<string, unknown> = { ...rawCfg, mood: normaliseMood(rawCfg.mood) };
   const masterPrompt = buildMasterPrompt({ ...cfg, title });
-  const storyTitle = (title as string) || "Untitled Story";
+  const storyTitle = (typeof title === "string" && title.trim()) || "Untitled Story";
 
-  // Create draft in SQLite first
+  // Create draft in SQLite first, born "generating": the status the UI has
+  // always had a badge for, set by nothing until now. The boot sweep marks any
+  // row still here after a restart as failed instead of leaving it "active"
+  // with no chapters.
   const draft = createStory({
     title: storyTitle,
     config: cfg,
     masterPrompt,
     chapters: [],
+    status: "generating",
   });
   recordEvent("story.created", { entityType: "story", entityId: draft.id });
 
@@ -43,7 +69,7 @@ export async function handleCreate(body: Record<string, unknown>): Promise<NextR
       "\n\nNumber of chapters: " + getChapterCount(cfg.length as string) +
       "\n\nGenerate the story arc and write Chapter 1 now.";
 
-    const raw = (await callLLM([{ role: "system", content: system }, { role: "user", content: userMessage }], { temperature: 0.85, maxTokens: 4096 })).content;
+    const raw = (await callLLM([{ role: "system", content: system }, { role: "user", content: userMessage }], { temperature: 0.85, maxTokens: 4096, modelId: storyModelId({ config: cfg }), spend: { source: "story", storyId: draft.id }, signal: opts.signal })).content;
     let storyArc: StoryArcType | null = null;
     let chapter1 = "";
 
@@ -78,7 +104,7 @@ export async function handleCreate(body: Record<string, unknown>): Promise<NextR
           chapter1 = validateChapterOutput(
             (await callLLM(
               [{ role: "system", content: system }, { role: "user", content: regenUser }],
-              { temperature: 0.85, maxTokens: 4096 }
+              { temperature: 0.85, maxTokens: 4096, modelId: storyModelId({ config: cfg }), spend: { source: "story", storyId: draft.id }, signal: opts.signal }
             )).content
           )
         } catch {}
@@ -121,7 +147,7 @@ export async function handleCreate(body: Record<string, unknown>): Promise<NextR
       const summarySystem = getStoryPrompt("summary");
       rollingSummary = ((await callLLM(
         [{ role: "system", content: summarySystem }, { role: "user", content: `NEW CHAPTER (Chapter 1):\n${chapter1}\n\nCreate the initial rolling summary.` }],
-        { temperature: 0.7, maxTokens: 1024 }
+        { temperature: 0.7, maxTokens: 1024, modelId: storyModelId({ config: cfg }), spend: { source: "story", storyId: draft.id }, signal: opts.signal }
       )).content);
     } catch {
       rollingSummary = `Chapter 1 introduces the story. ${chapter1.slice(0, 200)}...`;

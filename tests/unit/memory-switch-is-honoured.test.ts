@@ -8,7 +8,7 @@
 // PUT /api/memory/config, reload, and the page still reports hindsight with the
 // same facts. The QA pass diagnosed it as GET /api/memory re-parsing the agent's
 // config.yaml. That is not it — and the distinction matters, because the
-// config.yaml read is DELIBERATE and documented: docs/MEMORY.md says the file is
+// config.yaml read is DELIBERATE and documented: docs/guides/memory.md says the file is
 // consulted for exactly one thing, recognising a holographic install, and
 // "does not decide where Hindsight is reached". Migration 022's own header says
 // PatterStage is "the source of truth for WHICH memory provider is active and
@@ -40,21 +40,12 @@
 // first one below.
 
 import { join } from "path";
-import { execBaselineSchema } from "../helpers/baseline-db";
+import { openBaselineDb } from "../helpers/baseline-db";
 import { applyMemoryProvidersMigration } from "@/lib/db/apply-memory-providers-migration";
 
 let testDb: import("better-sqlite3").Database | null = null;
 
-jest.mock("@/lib/db", () => {
-  const actualCrypto = jest.requireActual("crypto") as typeof import("crypto");
-  return {
-    getDb: () => testDb!,
-    inTransaction: <T,>(fn: () => T) => testDb!.transaction(fn)(),
-    uuid: () => actualCrypto.randomUUID(),
-    now: () => new Date().toISOString(),
-    ensureDb: () => undefined,
-  };
-});
+jest.mock("@/lib/db", () => require("../helpers/baseline-db").dbSingletonMock(() => testDb));
 
 import {
   getActiveMemoryConfig,
@@ -63,16 +54,8 @@ import {
 } from "@/lib/memory/memory-providers/repository";
 import { getActiveMemoryProvider } from "@/lib/memory/memory-providers/registry";
 
-const migrationsDir = join(process.cwd(), "src", "lib", "db", "migrations");
-
 beforeEach(() => {
-  const Database = require("better-sqlite3/lib/index.js") as typeof import("better-sqlite3");
-  testDb = new (Database as unknown as new (p: string) => import("better-sqlite3").Database)(
-    ":memory:",
-  );
-  testDb.pragma("foreign_keys = ON");
-  execBaselineSchema(testDb);
-  applyMemoryProvidersMigration(testDb, migrationsDir);
+  testDb = openBaselineDb([applyMemoryProvidersMigration]);
 });
 afterEach(() => {
   testDb?.close();

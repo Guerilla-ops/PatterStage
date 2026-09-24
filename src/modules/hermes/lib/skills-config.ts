@@ -189,20 +189,11 @@ export function skillsRootForProfile(): string {
 
 /**
  * Canonical disk path for a skill's SKILL.md file, given the skills
- * root and the catalog key. The 1-line
- *   `${root}/${skillKey}/SKILL.md`
- * shape was repeated at 4 sites across 3 files (api/skills GET,
- * api/skills/[name] GET, api/skills/[...path] GET, and the sync
- * helper's pull-from-disk walker), plus a `${root}/${key}/SKILL.md`
- * variant in the sync push helper and the skillKey.split(...) walker
- * — all byte-equivalent. Centralising the path-join here keeps the
- * "/SKILL.md" suffix in one place so a future SKILL.md → SKILL.mdx
- * rename (or a `skillPathFor(root, key)` that handles slashed
- * catalog keys uniformly) lands in a single edit.
+ * root and the catalog key.
  *
  * String concatenation is intentional (no `path.join`) — the
  * project convention is to avoid `path.join` in shared libs per
- * the Turbopack NFT tracing issue (see `src/lib/paths.ts` header).
+ * the Turbopack NFT tracing issue (see `src/lib/host/paths.ts` header).
  * The skills root is already an absolute path produced by
  * `buildProfileHermesPathBundle`, so plain "/" joining is safe.
  *

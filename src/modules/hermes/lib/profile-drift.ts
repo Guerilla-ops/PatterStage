@@ -32,7 +32,7 @@
 // `contentHash(profile.userMd || "# User\n")` returned a real digest.
 // Null is never a digest, so a profile with no memories/USER.md was
 // drifted for ever and no pull could clear it. Only Push could, which
-// is why the banner's only CTA reads "Push all to Hermes". The operator
+// is why the banner points at Push all and nothing else. The operator
 // saw it directly: a "Pull all" that visibly worked, a profile's skills
 // going 183 to 218, and a banner that did not move.
 //
@@ -62,18 +62,15 @@ import { existsSync, readFileSync } from "fs";
 import { fileHash, contentHash } from "@/lib/fs/fs-helpers";
 import { buildHermesPathBundle } from "./paths";
 import { getHermesDefaultRoot } from "./profile-paths";
-import { getAgentRoot } from "@/lib/agent-root-repository";
-import { assembleConfigYamlForProfile, getProfile, listProfiles } from "./profiles-repository";
+import { getAgentRoot } from "@/lib/agents/agent-root-repository";
+import { assembleConfigYamlForProfile, getProfile } from "./profiles-repository";
 import {
   configYamlSemanticallyMatches,
   disabledSkillsMatchJson,
 } from "./profile-config-builder";
-import { listSkills, type SkillRow } from "@/lib/skills-repository";
-import { skillFilePath } from "./skills-config";
 import {
   assembleRootConfig,
   catalogKeysForPull,
-  globalSkillsRoot,
   profileRootForSlug,
 } from "./profile-sync-shared";
 
@@ -88,18 +85,6 @@ export interface RootDriftEntry {
   drifted: boolean;
   fields: string[];
   syncError: string | null;
-}
-
-interface SkillDriftEntry {
-  skillKey: string;
-  drifted: boolean;
-  syncError: string | null;
-}
-
-export interface FullDriftReport {
-  root: RootDriftEntry;
-  profiles: ProfileDriftEntry[];
-  skills: SkillDriftEntry[];
 }
 
 /**
@@ -124,7 +109,16 @@ export function detectProfileDrift(slug: string): ProfileDriftEntry {
 
   const bundle = buildHermesPathBundle(profileRootForSlug(slug));
   const fields: string[] = [];
-  const expectedConfig = assembleConfigYamlForProfile(profile);
+  // A row whose stored config no longer parses cannot be assembled — and the
+  // drift banner is precisely where an operator learns that. Report it AS
+  // drift with the reason, never 500 the page that explains it (T-0086).
+  let expectedConfig: string;
+  try {
+    expectedConfig = assembleConfigYamlForProfile(profile);
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    return { slug, drifted: true, fields: ["config.yaml"], syncError: reason };
+  }
   const catalogKeys = catalogKeysForPull();
 
   if (existsSync(bundle.config)) {
@@ -160,7 +154,13 @@ export function detectRootDrift(): RootDriftEntry {
   const row = getAgentRoot();
   const bundle = buildHermesPathBundle(getHermesDefaultRoot());
   const fields: string[] = [];
-  const expectedConfig = assembleRootConfig(row);
+  let expectedConfig: string;
+  try {
+    expectedConfig = assembleRootConfig(row);
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    return { drifted: true, fields: ["config.yaml"], syncError: reason };
+  }
   const catalogKeys = catalogKeysForPull();
 
   if (existsSync(bundle.config)) {
@@ -189,34 +189,5 @@ export function detectRootDrift(): RootDriftEntry {
     drifted: fields.length > 0,
     fields,
     syncError: row.syncError,
-  };
-}
-
-function detectSkillDrift(skill: SkillRow, skillsRoot: string): SkillDriftEntry {
-  const path = skillFilePath(skillsRoot, skill.skillKey);
-  const disk = fileHash(path);
-  const db = contentHash(skill.content);
-  return {
-    skillKey: skill.skillKey,
-    drifted: disk !== db,
-    syncError: skill.syncError,
-  };
-}
-
-function detectAllProfileDrift(): ProfileDriftEntry[] {
-  return listProfiles().map((p) => detectProfileDrift(p.slug));
-}
-
-export function detectFullDrift(): FullDriftReport {
-  // `listSkills()` already returns every row, body included. The previous
-  // `detectSkillDrift(s.skillKey)` then re-fetched each of those rows one at a
-  // time (1 + N queries for N skills) to read the body it had just discarded.
-  // Hand the row straight in, and resolve the skills root once rather than per
-  // skill.
-  const skillsRoot = globalSkillsRoot();
-  return {
-    root: detectRootDrift(),
-    profiles: detectAllProfileDrift(),
-    skills: listSkills().map((s) => detectSkillDrift(s, skillsRoot)),
   };
 }

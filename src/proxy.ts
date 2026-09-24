@@ -4,7 +4,7 @@
 // Next 16 renamed `middleware` to `proxy` and runs it on the Node.js runtime,
 // so this file can read the token file directly. It runs before every route.
 //
-// Why here and not in route handlers: `requireAuth()` in src/lib/api-auth.ts
+// Why here and not in route handlers: `requireAuth()` in src/lib/api/api-auth.ts
 // never authenticated anything (it only checked the read-only flag), so all 100
 // API routes were open to anyone who could reach the port — and BOTH start
 // scripts bind 0.0.0.0, not just `start:network`. `next start` has no loopback
@@ -30,14 +30,14 @@ import {
   getAuthMode,
   readAuthToken,
   tokenMatches,
-} from "@/lib/auth-token";
-import { isReadOnly, readOnlyMessage } from "@/lib/read-only";
+} from "@/lib/api/auth-token";
+import { isReadOnly, readOnlyMessage } from "@/lib/api/read-only";
 import {
   authClientKey,
   authPenaltySeconds,
   clearAuthFailures,
   recordAuthFailure,
-} from "@/lib/auth-throttle";
+} from "@/lib/api/auth-throttle";
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
@@ -49,6 +49,37 @@ const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 const PUBLIC_PATHS = new Set(["/api/health", "/api/healthz", "/healthz"]);
 
 /**
+ * The routes whose WRITES reach the host: a script the editor saves is executed
+ * later by cron and by /api/scripts/run, a crontab line is installed, the
+ * deploy script is spawned. With the token on, an authenticated operator
+ * already has a shell on this machine and these are features. With
+ * `PS_AUTH_MODE=none` they are unauthenticated remote code execution.
+ *
+ * `requireAuthenticatedHostWrites()` in src/lib/api/api-auth.ts is the same rule at
+ * the route level, and it was applied to the script editor and the crontab
+ * routes and forgotten on the two routes that EXECUTE (T-0095, D42/D123). A
+ * guard a route has to remember is not a boundary; this list is. The routes
+ * keep their own call as well, so a harness that bypasses the proxy is still
+ * not a hole.
+ */
+const HOST_SIDE_EFFECT_PREFIXES = ["/api/scripts/", "/api/cron/hardware", "/api/update"];
+
+function isHostSideEffectWrite(pathname: string, isSafe: boolean): boolean {
+  if (isSafe) return false;
+  return HOST_SIDE_EFFECT_PREFIXES.some((p) => pathname === p || pathname.startsWith(p));
+}
+
+function refuseHostWrite(): NextResponse {
+  return NextResponse.json(
+    {
+      error:
+        "Host-affecting writes are disabled while PS_AUTH_MODE=none. Re-enable the access token to edit, schedule or run scripts, or to deploy.",
+    },
+    { status: 403 },
+  );
+}
+
+/**
  * The read-only refusal.
  *
  * Deliberately raised only AFTER the caller has been authenticated. Refusing an
@@ -58,6 +89,22 @@ const PUBLIC_PATHS = new Set(["/api/health", "/api/healthz", "/healthz"]);
  */
 function refuseReadOnly(): NextResponse {
   return NextResponse.json({ error: readOnlyMessage() }, { status: 503 });
+}
+
+/**
+ * Let the request through, telling the root layout which path it is for.
+ *
+ * generateMetadata in src/app/layout.tsx reads `x-ps-pathname` to set the tab
+ * title from the registry (T-0097, D55). It has to come from here: a client
+ * effect setting document.title is overwritten when Next streams the layout's
+ * metadata after hydration, so on a fresh load every tab read "PatterStage".
+ * Every pass-through below goes through this, and
+ * tests/unit/b3-titles-from-registry.test.ts refuses a bare next() call.
+ */
+function pass(request: NextRequest, pathname: string): NextResponse {
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set("x-ps-pathname", pathname);
+  return NextResponse.next({ request: { headers: requestHeaders } });
 }
 
 function isApiPath(pathname: string): boolean {
@@ -186,12 +233,14 @@ export function proxy(request: NextRequest): NextResponse {
   // to return here, above the read-only branch, so any non-safe method added to
   // a public path would have punched straight through the mode. /api/health is
   // GET-only today, so this was a latent hole rather than a live one (T-0048).
-  if (PUBLIC_PATHS.has(pathname) && isSafe) return NextResponse.next();
+  if (PUBLIC_PATHS.has(pathname) && isSafe) return pass(request, pathname);
 
   const readOnlyRefusal = !isSafe && isReadOnly();
 
   if (getAuthMode() === "none") {
-    return readOnlyRefusal ? refuseReadOnly() : NextResponse.next();
+    if (readOnlyRefusal) return refuseReadOnly();
+    if (isHostSideEffectWrite(pathname, isSafe)) return refuseHostWrite();
+    return pass(request, pathname);
   }
 
   // FAILED-AUTH THROTTLE (T-0083, operator ruling 2). Checked before the token
@@ -251,7 +300,7 @@ export function proxy(request: NextRequest): NextResponse {
       return unauthorized(request);
     }
     clearAuthFailures(clientKey);
-    return readOnlyRefusal ? refuseReadOnly() : NextResponse.next();
+    return readOnlyRefusal ? refuseReadOnly() : pass(request, pathname);
   }
 
   const cookie = request.cookies.get(SESSION_COOKIE)?.value;
@@ -271,7 +320,7 @@ export function proxy(request: NextRequest): NextResponse {
     );
   }
 
-  return readOnlyRefusal ? refuseReadOnly() : NextResponse.next();
+  return readOnlyRefusal ? refuseReadOnly() : pass(request, pathname);
 }
 
 export const config = {

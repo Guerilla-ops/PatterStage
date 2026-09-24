@@ -13,6 +13,13 @@
 // names a thing the agent did or was given, so the panel makes no capability
 // claim it cannot support. ADR-0004's rule that every displayed number names its
 // subject is satisfiable here in a way it was not for the radar.
+//
+// "Memory facts" is not a row (T-0125). The signal behind it is a hard-coded
+// zero waiting for a count API that never landed (agent-experience.ts), so
+// every agent on every install read "Memory facts 0" while the Memory page
+// beside it counted real facts. A number that is always 0 is not a fact, and
+// two numbers that disagree teach the reader to trust neither. The signal
+// stays in the API, where a zero costs nobody anything.
 // ═══════════════════════════════════════════════════════════════
 
 import { AgentLevelBadge } from "@/components/achievements";
@@ -23,12 +30,12 @@ export default function AgentGrowthPanel({ profileId }: { profileId: string }) {
   const entry = entries.find((e) => e.targetRef === profileId) ?? null;
 
   if (isLoading) {
-    return <div className="text-xs font-mono text-ps-text-muted">Loading growth…</div>;
+    return <div className="text-micro font-mono text-ps-text-muted">Loading growth…</div>;
   }
 
   if (!entry) {
     return (
-      <div className="text-xs font-mono text-ps-text-muted">
+      <div className="text-micro font-mono text-ps-text-muted">
         No completed work yet. This agent starts growing on its first finished run.
       </div>
     );
@@ -40,7 +47,6 @@ export default function AgentGrowthPanel({ profileId }: { profileId: string }) {
     ["Active days", s.activeDays],
     ["Skills enabled", s.skillsEnabled],
     ["Toolsets attached", s.toolsetCount],
-    ["Memory facts", s.memoryFacts],
   ];
 
   return (
@@ -49,14 +55,13 @@ export default function AgentGrowthPanel({ profileId }: { profileId: string }) {
       <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5">
         {rows.map(([label, value]) => (
           <div key={label} className="flex items-baseline justify-between gap-2">
-            <dt className="truncate text-xs text-ps-text-muted">{label}</dt>
-            <dd className="font-mono text-xs font-semibold text-ps-text-primary">{value.toLocaleString()}</dd>
+            <dt className="truncate text-body text-ps-text-muted">{label}</dt>
+            <dd className="font-mono text-micro font-semibold text-ps-text-primary">{value.toLocaleString()}</dd>
           </div>
         ))}
       </dl>
-      <p className="text-xs text-ps-text-muted">
-        {entry.experience.xp.toLocaleString()} XP from work done and equipment acquired. Capability
-        measurement is not implemented; see ADR-0004.
+      <p className="text-body text-ps-text-muted">
+        {entry.experience.xp.toLocaleString()} XP from work done and equipment acquired.
       </p>
     </div>
   );

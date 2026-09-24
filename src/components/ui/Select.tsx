@@ -4,7 +4,7 @@
 
 import { ChevronDown } from "lucide-react";
 import type { AccentColor } from "@/types/console";
-import { focusColorMap } from "@/lib/theme";
+import { focusColorMap } from "@/lib/ui/theme";
 
 interface SelectOption {
   value: string;
@@ -37,20 +37,30 @@ export function InlineSelect({
   className = "",
   disabled = false,
   ariaLabel,
-}: Omit<SelectProps, "label" | "description">) {
+  id,
+  title,
+}: Omit<SelectProps, "label" | "description"> & {
+  /** The id a visible label or a test finds the control by. */
+  id?: string;
+  /** Long copy the control speaks through its tooltip. */
+  title?: string;
+}) {
   const focusClass = focusColorMap[accentColor];
 
   return (
     <div className={`relative ${className}`}>
       <select
         aria-label={ariaLabel}
+        id={id}
+        title={title}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         disabled={disabled}
-        className={`w-full bg-dark-900/50 border border-white/10 rounded-lg px-3 py-2 pr-8 text-sm text-white outline-none transition-colors font-mono appearance-none cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${focusClass}`}
+        // design-lint-disable-next-line no-bare-outline-none -- the accent focus border is focusClass on this same line, a focus:border-* class per accent
+        className={`w-full bg-ps-surface-panel border border-ps-edge rounded-ps-md px-3 py-2 pr-8 text-body text-ps-text-primary transition-colors font-mono appearance-none cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${focusClass}`}
       >
         {options.map((opt) => (
-          <option key={opt.value} value={opt.value} className="bg-dark-900">
+          <option key={opt.value} value={opt.value} className="bg-ps-surface-panel">
             {opt.label}
           </option>
         ))}

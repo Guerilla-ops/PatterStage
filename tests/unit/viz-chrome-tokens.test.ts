@@ -79,21 +79,19 @@ describe("the viz chrome scale", () => {
   });
 });
 
-describe("the reader chapter-state scale", () => {
+// Amended 2026-09-07 (U12, T-0126). This block held the five chapter-state
+// tints to their tokens; the tints are gone, because a chapter's state is a
+// status and the dots read the status ladder now. What the reader keeps is
+// the warm register itself, three colours, and those are what is held.
+describe("the reader's warm register", () => {
   const tokens = declaredTokens();
 
-  it.each([
-    "--ps-reader-chapter-done",
-    "--ps-reader-chapter-writing",
-    "--ps-reader-chapter-pending",
-    "--ps-reader-chapter-failed",
-    "--ps-reader-chapter-idle",
-  ])("declares %s", (token) => {
+  it.each(["--color-ps-reader-page", "--color-ps-reader-ink", "--color-ps-reader-rule"])("declares %s", (token) => {
     expect(tokens.has(token)).toBe(true);
   });
 
-  it("mints no colour for the idle state, which is the panel rule it already was", () => {
-    expect(tokens.get("--ps-reader-chapter-idle")).toBe("var(--ps-reader-rule)");
+  it("and no longer declares a second status ladder beside the house one", () => {
+    for (const token of tokens.keys()) expect(token.startsWith("--ps-reader-chapter-")).toBe(false);
   });
 });
 
@@ -165,7 +163,18 @@ describe("no chart paints text below the measured tiers", () => {
   it("points the axis labels at a tier the contrast gate measures", () => {
     const clock = readFileSync(join(ROOT, "src/components/viz/RadialActivityClock.tsx"), "utf-8");
     const histo = readFileSync(join(ROOT, "src/components/viz/DistributionHistogram.tsx"), "utf-8");
+    // An SVG label paints through `fill`, so it names the token as a CSS var.
     expect(clock).toContain("var(--color-ps-text-faint)");
-    expect(histo).toContain("var(--color-ps-text-faint)");
+    // The histogram's labels are HTML since T-0124 - it was the one chart with
+    // text inside a `preserveAspectRatio="none"` stretch, squashing every glyph
+    // to 57% of its width - so the SAME tier arrives through the utility
+    // instead. That is the stronger form of this assertion, not the weaker
+    // one: a class is what `no-sub-12px-type` and the live contrast gate can
+    // both see, and a var in a fill is visible to neither.
+    expect(histo).toContain("text-ps-text-faint");
+    // On the CODE, not the prose: the file's own comment names the defect it
+    // fixed, and a pattern that reads comments is answered by the story
+    // rather than by the fix. No SVG means no viewBox to disagree with.
+    expect(histo).not.toMatch(/<svg/);
   });
 });

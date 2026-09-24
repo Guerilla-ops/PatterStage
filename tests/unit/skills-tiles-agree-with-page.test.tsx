@@ -1,4 +1,5 @@
 /** @jest-environment jsdom */
+/* eslint-disable @typescript-eslint/no-require-imports */
 
 /**
  * T-0044 · The Skills page and its own stat tiles must agree.
@@ -26,46 +27,55 @@
  * case-folding path is exercised rather than assumed.
  */
 
-import { render, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
+import { renderWithQuery } from "../helpers/render-with-query";
 
 import type { Skill } from "@/types/console";
 
-// ── Mocks: everything EXCEPT SkillsInsights, which is the point of the file ──
+// ── Mocks: everything EXCEPT the subtitle, which is the point of the file ──
+//
+// Amended 2026-09-10 (U11, T-0125). The strip this file held to the page is
+// gone: Active, Inactive and Total were the donut's own arcs and centre, and
+// Categories was the one fact it carried. The SUBTITLE carries all four now,
+// in one line, and it is the same claim about the same list, so it is held to
+// the same standard here: the numbers are read off the DOM, never the props.
 
 jest.mock("lucide-react", () => {
   const passthrough = (name: string) => () => `[${name}]`;
   return new Proxy({}, { get: (_t, prop: string) => passthrough(prop) });
 });
 
-jest.mock("@/components/layout/AppPageShell", () => ({
-  __esModule: true,
-  default: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-}));
+jest.mock("@/components/layout/AppPageShell", () => require("../helpers/mocks").appPageShellMock());
 
 jest.mock("@/components/layout/PageHeader", () => ({
   __esModule: true,
   default: ({ subtitle }: { subtitle?: string }) => <div data-testid="page-header">{subtitle}</div>,
 }));
 
-jest.mock("@/components/ui/ProfileSelector", () => ({
+jest.mock("@/components/ui/ProfilePicker", () => ({
   __esModule: true,
-  default: () => <div data-testid="profile-selector" />,
+  default: () => <div data-testid="profile-picker" />,
 }));
-
-jest.mock("@/lib/operation-sync-action", () => ({
-  __esModule: true,
-  runSyncAction: jest.fn(),
+jest.mock("@/hooks/useProfiles", () => ({
+  useProfiles: () => ({ refetch: async () => undefined, data: [{ id: "default", name: "Bob", description: "" }], isLoading: false, error: null }),
 }));
 
 const apiFetch = jest.fn();
-jest.mock("@/lib/api-fetch", () => ({
+jest.mock("@/lib/api/api-fetch", () => ({
   __esModule: true,
   apiFetch: (...args: unknown[]) => apiFetch(...args),
+  // The page reads through useApiResource, which calls safeApiCall; routed
+  // through the same mock so a read is still one of the calls asked for (C6, T-0143).
+   
+  safeApiCall: require("../helpers/mocks").safeApiCallOver((...a: unknown[]) => apiFetch(...a)),
   toastError: jest.fn(),
+  // Amended 2026-09-10 (C3, T-0138): the toggle writes through runWrite, which says a
+  // failure through messageFromError.
+  messageFromError: (e: unknown, f: string) => (e instanceof Error ? e.message : f),
   API_FETCH_BULK_TIMEOUT_MS: 300_000,
 }));
 
-import SkillsPage from "@/app/operations/skills/page";
+import SkillsPage from "@/app/agent/skills/page";
 
 // ── Fixture ─────────────────────────────────────────────────────────────────
 
@@ -136,67 +146,47 @@ beforeEach(() => {
 });
 
 async function renderPage() {
-  const view = render(<SkillsPage />);
+  const view = renderWithQuery(<SkillsPage />);
   await waitFor(() =>
     expect(screen.getAllByTestId("skill-category-row").length).toBeGreaterThan(0),
   );
   return view;
 }
 
-/**
- * The number rendered in the tile labelled `label`.
- *
- * Read from the DOM rather than from the component's props, because a tile that
- * computes correctly and paints something else is exactly the failure the stat
- * strip already had (T-0035: every tile painted 0 on first frame).
- */
-function tileValue(label: string): number {
-  const tiles = screen.getAllByTestId("stat-tile").filter(
-    (t) => t.getAttribute("data-stat-label") === label,
-  );
-  if (tiles.length !== 1) throw new Error(`expected one "${label}" tile, found ${tiles.length}`);
-  const digits = (tiles[0].textContent ?? "").replace(label, "").match(/\d[\d,]*/);
-  if (!digits) throw new Error(`no number in the "${label}" tile: ${tiles[0].textContent}`);
-  return Number(digits[0].replace(/,/g, ""));
+/** The number the subtitle prints before `word`, read off the DOM. */
+function subtitleNumber(word: string): number {
+  const text = screen.getByTestId("page-header").textContent ?? "";
+  const m = new RegExp(`(\\d[\\d,]*)\\s+${word}`).exec(text);
+  if (!m) throw new Error(`no "<n> ${word}" in the subtitle: ${text}`);
+  return Number(m[1].replace(/,/g, ""));
 }
 
-describe("the Skills tiles agree with the Skills page", () => {
-  it("the Categories tile counts exactly the category rows the page renders", async () => {
+describe("the Skills subtitle agrees with the Skills page", () => {
+  it("the category count is exactly the category rows the page renders", async () => {
     await renderPage();
     const rendered = screen.getAllByTestId("skill-category-row").length;
     expect(rendered).toBe(CATEGORY_COUNT);
-    expect(tileValue("Categories")).toBe(rendered);
+    expect(subtitleNumber("categories")).toBe(rendered);
   });
 
   it("does not count a SHOUTED spelling as its own category", async () => {
     await renderPage();
     // cat-03 and CAT-03 are both present in the fixture. If either side stopped
     // folding case, this reads 13 on one side and 12 on the other.
-    expect(tileValue("Categories")).toBe(CATEGORY_COUNT);
+    expect(subtitleNumber("categories")).toBe(CATEGORY_COUNT);
   });
 
-  it("the Total tile equals the catalogue the page was given", async () => {
+  it("the total is the catalogue the page was given, and active is the enabled part of it", async () => {
     await renderPage();
-    expect(tileValue("Total")).toBe(TOTAL);
-  });
-
-  it("Active and Inactive partition Total, which is what the hint claims", async () => {
-    await renderPage();
-    const total = tileValue("Total");
-    const active = tileValue("Active");
-    const inactive = tileValue("Inactive");
-    expect(active).toBe(ACTIVE);
-    // The Inactive tile's own hint reads "(Total − Active)". An arrangement
-    // where those three numbers do not add up makes the hint a lie.
-    expect(active + inactive).toBe(total);
+    expect(subtitleNumber("skills")).toBe(TOTAL);
+    expect(subtitleNumber("active")).toBe(ACTIVE);
   });
 
   it("paints the real numbers on the FIRST frame, with no ramp from zero", async () => {
     await renderPage();
     // No timer flush, no act() beyond the initial load: whatever is on screen
-    // right now is what a human sees first. T-0035 fixed useCountUp seeding at
-    // zero; this holds it fixed on the page a QA pass actually opened.
-    expect(tileValue("Total")).toBe(TOTAL);
-    expect(tileValue("Categories")).toBe(CATEGORY_COUNT);
+    // right now is what a human sees first.
+    expect(subtitleNumber("skills")).toBe(TOTAL);
+    expect(subtitleNumber("categories")).toBe(CATEGORY_COUNT);
   });
 });

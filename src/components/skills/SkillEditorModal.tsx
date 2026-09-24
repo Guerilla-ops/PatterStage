@@ -1,13 +1,13 @@
 // ── SkillEditorModal — edit one skill's markdown.
-// Extracted verbatim from app/operations/skills/page.tsx. The content,
-// the original snapshot and the PUT stay on the page; this renders the
-// modal and calls back. Presentation only.
+// The content, the original snapshot and the PUT stay on the page; this
+// renders the modal and calls back. Presentation only.
 
 "use client";
 
 import { Edit3, RotateCcw, Save } from "lucide-react";
 import Button from "@/components/ui/Button";
 import Modal from "@/components/ui/Modal";
+import { Textarea } from "@/components/ui/field";
 
 export interface SkillEditorModalProps {
   skillName: string | null;
@@ -66,11 +66,11 @@ export default function SkillEditorModal({
         </>
       }
     >
-      <textarea
+      <Textarea
         aria-label="Skill source"
         value={content}
         onChange={(e) => onContentChange(e.target.value)}
-        className="w-full min-h-[320px] bg-dark-800 border border-white/10 rounded-lg p-4 text-sm text-ps-text-primary font-mono resize-y focus:border-neon-green/50 focus:outline-none"
+        className="min-h-[320px]"
         spellCheck={false}
       />
     </Modal>

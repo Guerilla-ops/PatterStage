@@ -3,10 +3,10 @@
 // ps-deploy.mjs — cross-platform deploy runner (Windows/macOS/Linux)
 // ═══════════════════════════════════════════════════════════════
 // Single implementation of update / rebuild / restart, spawned detached by
-// src/lib/deploy-spawn.ts (the in-app Update/Rebuild/Restart buttons) and by
+// src/lib/deploy/deploy-spawn.ts (the in-app Update/Rebuild/Restart buttons) and by
 // the thin scripts/application/ps-deploy.sh CLI wrapper. Ports
 // scripts/lib/ps-deploy-impl.sh — writes the identical ps-deploy.status format
-// that src/lib/deploy-status.ts reads. Plain ESM so it runs in bare `node`
+// that src/lib/deploy/deploy-status.ts reads. Plain ESM so it runs in bare `node`
 // outside the Next build.
 
 import { spawnSync } from "child_process";
@@ -18,14 +18,17 @@ import { homedir, tmpdir } from "os";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 
-import { isWindows, detachedSpawn, isPidAlive, killByPort, killPid, portInUse } from "./_platform.mjs";
+import {
+  isWindows, detachedSpawn, isPidAlive, killByPort, killPid, portInUse,
+  OWNER_ONLY_FILE, restrictToOwner,
+} from "./_platform.mjs";
 import { loadEnvLocal, readEnvLocalValue } from "./_env-local.mjs";
 
 const SCRIPTS_TOOLING = dirname(fileURLToPath(import.meta.url));
 const SCRIPTS_ROOT = join(SCRIPTS_TOOLING, "..");
 const APP_DIR = join(SCRIPTS_ROOT, "..");
 
-// ── paths (mirror src/lib/paths.ts) ─────────────────────────────
+// ── paths (mirror src/lib/host/paths.ts) ─────────────────────────────
 
 function normDir(d) {
   return d.replace(/[/\\]+$/, "");
@@ -33,7 +36,7 @@ function normDir(d) {
 function dirHasDb(d) {
   return existsSync(join(d, "patterstage.db")) || existsSync(join(d, "control-hub.db"));
 }
-// Mirrors src/lib/paths.ts (resolveDataDir/getDbPath). Keep in lockstep: an
+// Mirrors src/lib/host/paths.ts (resolveDataDir/getDbPath). Keep in lockstep: an
 // explicit env var wins; else a dir that already holds a populated DB beats
 // creating/opening an empty one (the case-sensitive ~/PatterStage vs
 // ~/patterstage race); when both DB names exist, prefer the larger (populated).
@@ -121,7 +124,8 @@ export function statusWrite(state, action, phase, message, exitCode = "", logHin
 function log(base, msg) {
   ensureLogs();
   try {
-    const fd = openSync(logFile(base), "a");
+    const fd = openSync(logFile(base), "a", OWNER_ONLY_FILE);
+    restrictToOwner(logFile(base), OWNER_ONLY_FILE);
     writeFileSync(fd, `[${new Date().toISOString()}] ${msg}\n`);
     closeSync(fd);
   } catch {
@@ -183,7 +187,8 @@ const npmBin = () => (isWindows ? "npm.cmd" : "npm");
 /** Run a command, appending stdout+stderr to <base> log. Returns true on exit 0. */
 function run(cmd, args, base, opts = {}) {
   ensureLogs();
-  const fd = openSync(logFile(base), "a");
+  const fd = openSync(logFile(base), "a", OWNER_ONLY_FILE);
+  restrictToOwner(logFile(base), OWNER_ONLY_FILE);
   try {
     const r = spawnSync(cmd, args, {
       cwd: opts.cwd || APP_DIR,
@@ -246,7 +251,16 @@ function backupDb(dataDir) {
   const bak = `${db}.pre-migrate-${ts}.bak`;
   try {
     copyFileSync(db, bak);
-    for (const s of ["-wal", "-shm"]) if (existsSync(db + s)) copyFileSync(db + s, bak + s);
+    // A whole database, and on a pre-fix install the source it copies its mode
+    // from is still 0644. This runs before the app has booted and narrowed
+    // anything, so it says the mode itself rather than inheriting one.
+    restrictToOwner(bak, OWNER_ONLY_FILE);
+    for (const s of ["-wal", "-shm"]) {
+      if (existsSync(db + s)) {
+        copyFileSync(db + s, bak + s);
+        restrictToOwner(bak + s, OWNER_ONLY_FILE);
+      }
+    }
     return bak;
   } catch {
     return null;
@@ -280,7 +294,7 @@ async function restartBody() {
   const host = process.env.PS_NEXT_BIND_HOST || "0.0.0.0";
   // Grace before we tear down the listener. On a bare `restart`, the HTTP
   // request that spawned us is being served BY the very server on `port`;
-  // deploy-spawn (src/lib/deploy-spawn.ts) probes our liveness for ~2s before
+  // deploy-spawn (src/lib/deploy/deploy-spawn.ts) probes our liveness for ~2s before
   // returning 200 {started}. Wait past that window so the caller's response
   // flushes first — otherwise killByPort drops the connection mid-response and
   // the client sees HTTP 000. (For update/rebuild the build already took far
@@ -310,9 +324,11 @@ async function restartBody() {
     }
   }
 
-  // fresh runtime log per start
+  // fresh runtime log per start. Truncation keeps the mode the file already
+  // had, so the chmod is the half that fixes an install made before this.
   try {
-    writeFileSync(RUNTIME_LOG(), "");
+    writeFileSync(RUNTIME_LOG(), "", { mode: OWNER_ONLY_FILE });
+    restrictToOwner(RUNTIME_LOG(), OWNER_ONLY_FILE);
   } catch {
     /* ignore */
   }

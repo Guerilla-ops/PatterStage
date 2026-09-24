@@ -1,12 +1,15 @@
-// Unit tests for the 4 dashboard helpers extracted in session 174:
+// Unit tests for the dashboard helpers extracted in session 174 (the fourth,
+// loadInitialDashboardData, went in T-0129: every dashboard read is a
+// useApiResource keyed on its endpoint now, and there is no second loader):
 //   - dedupErrors (src/lib/dashboard/dashboard-error-dedup.ts)
-//   - formatModelSubtitle (src/lib/dashboard/dashboard-model-subtitle.ts)
+//   - resolveModelReadiness (src/lib/models/model-readiness.ts), which took
+//     over from formatModelSubtitle when the product's three answers to "do I
+//     have a model?" were collapsed into one. The subtitle is one of its three
+//     readers now, so the ladder it used to own is asserted there.
 //   - topNTemplates (src/lib/dashboard-top-templates.ts)
-//   - loadInitialDashboardData (src/lib/dashboard-initial-load.ts)
 //
 // The dashboard (src/app/page.tsx) is not rendered here; we exercise
-// the helpers directly with mocked fetch (for loadInitialDashboardData)
-// or pure inputs (for the 3 pure helpers). The byte-equivalence
+// the helpers directly with pure inputs. The byte-equivalence
 // expectations (the inline code in page.tsx produced the same shape)
 // are documented inline next to each test.
 
@@ -14,19 +17,9 @@ import {
   dedupErrors,
   type DedupableError,
 } from "@/lib/dashboard/dashboard-error-dedup";
-import { formatModelSubtitle } from "@/lib/dashboard/dashboard-model-subtitle";
+import { resolveModelReadiness } from "@/lib/models/model-readiness";
 import { topNTemplates } from "@/lib/dashboard/dashboard-top-templates";
-// Note: `loadInitialDashboardData` is imported via the test name
-// only; the test bodies use `require()` inside `jest.isolateModules`
-// to re-require the helper after `jest.doMock` registers the mock.
-// The static import is intentionally unused (eslint allows `_`-prefix
-// names; we keep the symbol in scope so test names reference it).
-import {
-  loadInitialDashboardData as _loadInitialDashboardData,
-  type DashboardTemplate,
-  type ModelsDefaults,
-} from "@/lib/dashboard/dashboard-initial-load";
-import { safeApiCallData } from "@/lib/api-fetch";
+import type { DashboardTemplate } from "@/hooks/useDashboard";
 
 // ── dedupErrors ───────────────────────────────────────────────
 
@@ -92,31 +85,47 @@ describe("dedupErrors", () => {
   });
 });
 
-// ── formatModelSubtitle ───────────────────────────────────────
+// ── the header subtitle, now one reader of the readiness answer ──
+//
+// These five cases are the ones formatModelSubtitle held. The ladder is
+// unchanged; the strings moved with it, and the middle case says "not sent to
+// the agent yet" instead of "registry default (not yet applied)" because the
+// dashboard is a novice screen and the reader does not have to know the
+// product has a registry to act on it.
 
-describe("formatModelSubtitle", () => {
-  it("returns the disk model with provider when both are set", () => {
-    expect(formatModelSubtitle("gpt-4o", "openai", null)).toBe("gpt-4o · openai");
+function subtitle(configModel: string, configProvider: string, registryLabel: string | null) {
+  return resolveModelReadiness({ configModel, configProvider, registryLabel }).label;
+}
+
+describe("the model named in the dashboard header", () => {
+  it("returns the config-file model with provider when both are set", () => {
+    expect(subtitle("gpt-4o", "openai", null)).toBe("gpt-4o · openai");
   });
 
-  it("returns just the disk model when provider is empty", () => {
-    expect(formatModelSubtitle("claude-3-5-sonnet", "", null)).toBe("claude-3-5-sonnet");
+  it("returns just the config-file model when provider is empty", () => {
+    expect(subtitle("claude-3-5-sonnet", "", null)).toBe("claude-3-5-sonnet");
   });
 
-  it("falls back to the registry label when disk is empty", () => {
-    expect(formatModelSubtitle("", "", "claude-3-5-sonnet")).toBe(
-      "claude-3-5-sonnet · registry default (not yet applied)",
+  it("falls back to the registry label when the config file is empty", () => {
+    expect(subtitle("", "", "claude-3-5-sonnet")).toBe(
+      "claude-3-5-sonnet · not sent to the agent yet",
     );
   });
 
-  it("ignores the registry label when the disk has a model (priority 1 wins)", () => {
-    expect(formatModelSubtitle("gpt-4o", "openai", "claude-3-5-sonnet")).toBe(
-      "gpt-4o · openai",
-    );
+  it("ignores the registry label when the config file has a model (priority 1 wins)", () => {
+    expect(subtitle("gpt-4o", "openai", "claude-3-5-sonnet")).toBe("gpt-4o · openai");
   });
 
-  it("returns '-' when both disk and registry are empty", () => {
-    expect(formatModelSubtitle("", "", null)).toBe("-");
+  it("returns '-' when both the config file and the registry are empty", () => {
+    expect(subtitle("", "", null)).toBe("-");
+  });
+
+  it("only the config-file case counts as a model the agent can use", () => {
+    // The half the subtitle could never say, and the half three screens each
+    // guessed at: a name on screen is not the same as a model the agent has.
+    expect(resolveModelReadiness({ configModel: "gpt-4o", configProvider: "openai", registryLabel: null }).ready).toBe(true);
+    expect(resolveModelReadiness({ configModel: "", configProvider: "", registryLabel: "gpt-4o" }).ready).toBe(false);
+    expect(resolveModelReadiness({ configModel: "", configProvider: "", registryLabel: null }).ready).toBe(false);
   });
 });
 
@@ -143,19 +152,23 @@ describe("topNTemplates", () => {
     expect(result).not.toBe(input); // defensive copy, not the same reference
   });
 
-  it("caps at the default 12 when more templates are provided", () => {
+  // The default cap was 12 until U20 (T-0134): at 900px tall the strip was
+  // cut at the fold. It is six, one row, and DispatchStrip reads the same
+  // constant.
+  it("caps at the default 6 when more templates are provided", () => {
     const input: DashboardTemplate[] = Array.from({ length: 20 }, (_, i) =>
       makeTemplate({ id: `tpl-${i}`, name: `Template ${i}` }),
     );
     const result = topNTemplates(input);
-    expect(result).toHaveLength(12);
+    expect(result).toHaveLength(6);
   });
 
   it("sorts custom templates first, then alphabetical by name", () => {
-    // We need MORE than n entries (default 12) to force the sort path;
-    // otherwise the no-op fast path returns [...templates] in input
-    // order and the sort never runs. 13 entries, cap 12 → 1 entry is
-    // dropped (the last in sorted order).
+    // We need MORE than n entries to force the sort path; otherwise the
+    // no-op fast path returns [...templates] in input order and the sort
+    // never runs. 13 entries at the explicit cap of 12 → 1 entry is dropped
+    // (the last in sorted order). The cap is passed, since U20 moved the
+    // default to six; the ladder under test is the same.
     const input: DashboardTemplate[] = [
       makeTemplate({ id: "0", name: "Z-extra", isCustom: false }),
       makeTemplate({ id: "1", name: "Zebra", isCustom: false }),
@@ -171,7 +184,7 @@ describe("topNTemplates", () => {
       makeTemplate({ id: "11", name: "Filler2", isCustom: false }),
       makeTemplate({ id: "12", name: "Filler3", isCustom: false }),
     ];
-    const result = topNTemplates(input);
+    const result = topNTemplates(input, 12);
     // Verified with plain-node sort: customs sort first (Apple, B,
     // Banana, E1), then non-customs alphabetically (C, D, E2, Filler1,
     // Filler2, Filler3, Mango, Z-extra, Zebra). The cap drops the
@@ -201,7 +214,8 @@ describe("topNTemplates", () => {
   });
 
   it("treats missing names as empty strings for sort", () => {
-    // 13 entries (default n=12) so the sort path is exercised; the
+    // 13 entries at an explicit cap of 12 (the default is six since U20,
+    // T-0134) so the sort path is exercised; the
     // no-op fast path returns [...input] in input order, which would
     // mask the sort behaviour.
     const input: DashboardTemplate[] = [
@@ -222,98 +236,10 @@ describe("topNTemplates", () => {
     // Verified with plain-node sort: localeCompare puts "" BEFORE
     // non-empty strings, so the empty-name entry sorts FIRST. The
     // cap drops the LAST sorted entry (F9), keeping 12 in the result.
-    const result = topNTemplates(input);
+    const result = topNTemplates(input, 12);
     expect(result).toHaveLength(12);
     expect(result[0].name).toBeUndefined();
     // Every entry from index 1 onwards must have a non-empty name.
     expect(result.slice(1).every((t) => (t.name ?? "") !== "")).toBe(true);
-  });
-});
-
-// ── loadInitialDashboardData ──────────────────────────────────
-
-describe("loadInitialDashboardData", () => {
-  beforeEach(() => {
-    jest.resetAllMocks();
-  });
-
-  it("returns null slots for every endpoint when all 8 fetches return null", async () => {
-    jest.spyOn(safeApiCallData, "call" as never); // not used; safeApiCallData is async
-    // Mock the safeApiCallData module to return null for all calls.
-    jest.doMock("@/lib/api-fetch", () => ({
-      safeApiCallData: jest.fn().mockResolvedValue(null),
-    }));
-    // Re-require the helper after the mock is registered.
-    jest.isolateModules(() => {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { loadInitialDashboardData: load } = require("@/lib/dashboard/dashboard-initial-load");
-      // The mocked fetch returns null for every endpoint, so the
-      // helper's `?? null` / `?? []` defensive defaults fire.
-      return load({}).then((result: unknown) => {
-        const r = result as { dashboardData: Record<string, unknown>; modelsDefaults: unknown };
-        expect(r.dashboardData).toEqual({
-          status: null,
-          config: null,
-          templates: [],
-          categories: [],
-          monitor: null,
-          processes: [],
-          missions: [],
-        });
-        expect(r.modelsDefaults).toBeNull();
-      });
-    });
-  });
-
-  it("unwraps the inner payload for endpoints with a `{ data: T }` envelope", async () => {
-    const fixtures = {
-      status: { gatewayConnected: true },
-      config: { model: { default: "gpt-4o" } },
-      templates: { templates: [{ id: "t1", name: "T1" }] },
-      categories: { categories: [{ id: "c1", name: "C1" }] },
-      monitor: { cron: { jobs: [] }, sessions: { recent: [] } },
-      processes: { processes: [{ id: "p1" }] },
-      missions: { missions: [{ id: "m1" }] },
-      defaults: { defaults: { agent: "claude-3-5-sonnet" } },
-    };
-    jest.doMock("@/lib/api-fetch", () => ({
-      safeApiCallData: jest.fn().mockImplementation((path: string) => {
-        if (path.endsWith("/api/status")) return Promise.resolve(fixtures.status);
-        if (path.endsWith("/api/config")) return Promise.resolve(fixtures.config);
-        if (path.endsWith("/api/templates")) return Promise.resolve(fixtures.templates);
-        if (path.endsWith("/api/mission-categories")) return Promise.resolve(fixtures.categories);
-        if (path.endsWith("/api/monitor")) return Promise.resolve(fixtures.monitor);
-        if (path.endsWith("/api/agents")) return Promise.resolve(fixtures.processes);
-        if (path.endsWith("/api/missions")) return Promise.resolve(fixtures.missions);
-        if (path.endsWith("/api/models/defaults")) return Promise.resolve(fixtures.defaults);
-        return Promise.resolve(null);
-      }),
-    }));
-    jest.isolateModules(() => {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { loadInitialDashboardData: load } = require("@/lib/dashboard/dashboard-initial-load");
-      return load({}).then((result: unknown) => {
-        const r = result as {
-          dashboardData: {
-            status: unknown;
-            config: unknown;
-            templates: unknown[];
-            categories: unknown[];
-            monitor: unknown;
-            processes: unknown[];
-            missions: unknown[];
-          };
-          modelsDefaults: { defaults: ModelsDefaults | null } | null;
-        };
-        expect(r.dashboardData.status).toEqual(fixtures.status);
-        expect(r.dashboardData.config).toEqual(fixtures.config);
-        expect(r.dashboardData.templates).toEqual(fixtures.templates.templates);
-        expect(r.dashboardData.categories).toEqual(fixtures.categories.categories);
-        expect(r.dashboardData.monitor).toEqual(fixtures.monitor);
-        expect(r.dashboardData.processes).toEqual(fixtures.processes.processes);
-        expect(r.dashboardData.missions).toEqual(fixtures.missions.missions);
-        expect(r.modelsDefaults?.defaults?.agent).toBe("claude-3-5-sonnet");
-      });
-    });
   });
 });

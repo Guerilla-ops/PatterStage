@@ -1,5 +1,5 @@
-/* eslint-disable @typescript-eslint/no-require-imports */
 /** @jest-environment node */
+/* eslint-disable @typescript-eslint/no-require-imports */
 
 /**
  * Tests for syncDefaultsToHermesConfig: rewrites ~/.hermes/config.yaml
@@ -14,57 +14,19 @@ import * as yaml from "js-yaml";
 
 let fakeRoot: string;
 
-import { execBaselineSchema } from "../helpers/baseline-db";
+import { openBaselineDb } from "../helpers/baseline-db";
 
 let testDb: import("better-sqlite3").Database | null = null;
 
-jest.mock("@/lib/db", () => {
-  const actualCrypto = jest.requireActual("crypto") as typeof import("crypto");
-  return {
-    getDb: () => testDb!,
-    inTransaction: <T,>(fn: () => T) => testDb!.transaction(fn)(),
-    uuid: () => actualCrypto.randomUUID(),
-    now: () => new Date().toISOString(),
-    ensureDb: () => undefined,
-  };
-});
+jest.mock("@/lib/db", () => require("../helpers/baseline-db").dbSingletonMock(() => testDb));
 
-jest.mock("@/modules/hermes/lib/agent-runtime", () => ({
-  getActiveHermesPaths: () => {
-    const root = (global as { __FAKE_HERMES_ROOT__?: string }).__FAKE_HERMES_ROOT__!;
-    return {
-      root,
-      env: join(root, ".env"),
-      soul: join(root, "SOUL.md"),
-      hermes: join(root, "HERMES.md"),
-      agents: join(root, "AGENTS.md"),
-      skills: join(root, "skills"),
-      profiles: join(root, "profiles"),
-      sessions: join(root, "sessions"),
-      logs: join(root, "logs"),
-      config: join(root, "config.yaml"),
-      backups: join(root, "backups"),
-      cronJobs: join(root, "cron", "jobs.json"),
-      memoryDb: join(root, "memory_store.db"),
-    };
-  },
-  getActiveHermesHome: () => (global as { __FAKE_HERMES_ROOT__?: string }).__FAKE_HERMES_ROOT__,
-}));
-
-function loadRealBetterSqlite3(): typeof import("better-sqlite3") {
-  return require("better-sqlite3/lib/index.js") as typeof import("better-sqlite3");
-}
+jest.mock("@/modules/hermes/lib/agent-runtime", () => require("../helpers/mocks").agentRuntimeFakeRootMock());
 
 beforeEach(() => {
   fakeRoot = mkdtempSync(join(tmpdir(), "ch-yaml-sync-"));
   (global as { __FAKE_HERMES_ROOT__?: string }).__FAKE_HERMES_ROOT__ = fakeRoot;
 
-  const Database = loadRealBetterSqlite3();
-  testDb = new (Database as unknown as new (path: string) => import("better-sqlite3").Database)(
-    ":memory:"
-  );
-  testDb.pragma("foreign_keys = ON");
-  execBaselineSchema(testDb);
+  testDb = openBaselineDb();
 });
 
 afterEach(() => {
@@ -94,7 +56,7 @@ describe("syncFallbacksToHermesConfig", () => {
 
 describe("syncDefaultsToHermesConfig", () => {
   it("writes model.default + provider + base_url + empty api_key when agent default is set", () => {
-    const { createModel, setDefaultModel } = require("@/lib/models-repository") as typeof import("@/lib/models-repository");
+    const { createModel, setDefaultModel } = require("@/lib/models/models-repository") as typeof import("@/lib/models/models-repository");
     const { syncDefaultsToHermesConfig } = require("@/modules/hermes/lib/config-sync") as typeof import("@/modules/hermes/lib/config-sync");
 
     const m = createModel({
@@ -120,7 +82,7 @@ describe("syncDefaultsToHermesConfig", () => {
   });
 
   it("writes auxiliary slots for each is_default_<task> = 1", () => {
-    const { createModel, setDefaultModel } = require("@/lib/models-repository") as typeof import("@/lib/models-repository");
+    const { createModel, setDefaultModel } = require("@/lib/models/models-repository") as typeof import("@/lib/models/models-repository");
     const { syncDefaultsToHermesConfig } = require("@/modules/hermes/lib/config-sync") as typeof import("@/modules/hermes/lib/config-sync");
 
     const fast = createModel({ name: "fast", provider: "openai", modelId: "openai/gpt-5" });
@@ -150,7 +112,7 @@ describe("syncDefaultsToHermesConfig", () => {
     );
     writeFileSync(join(fakeRoot, "config.yaml"), original);
 
-    const { createModel, setDefaultModel } = require("@/lib/models-repository") as typeof import("@/lib/models-repository");
+    const { createModel, setDefaultModel } = require("@/lib/models/models-repository") as typeof import("@/lib/models/models-repository");
     const { syncDefaultsToHermesConfig } = require("@/modules/hermes/lib/config-sync") as typeof import("@/modules/hermes/lib/config-sync");
     const m = createModel({ name: "M", provider: "anthropic", modelId: "anthropic/claude-sonnet-4" });
     setDefaultModel("agent", m.id);
@@ -172,7 +134,7 @@ describe("syncDefaultsToHermesConfig", () => {
     const original = yaml.dump({ agent: { verbose: false } }, { lineWidth: -1 });
     writeFileSync(join(fakeRoot, "config.yaml"), original);
 
-    const { createModel, setDefaultModel } = require("@/lib/models-repository") as typeof import("@/lib/models-repository");
+    const { createModel, setDefaultModel } = require("@/lib/models/models-repository") as typeof import("@/lib/models/models-repository");
     const { syncDefaultsToHermesConfig } = require("@/modules/hermes/lib/config-sync") as typeof import("@/modules/hermes/lib/config-sync");
     const m = createModel({ name: "M", provider: "anthropic", modelId: "x" });
     setDefaultModel("agent", m.id);
@@ -184,7 +146,7 @@ describe("syncDefaultsToHermesConfig", () => {
   });
 
   it("does not produce legacy compression.summary_* keys", () => {
-    const { createModel, setDefaultModel } = require("@/lib/models-repository") as typeof import("@/lib/models-repository");
+    const { createModel, setDefaultModel } = require("@/lib/models/models-repository") as typeof import("@/lib/models/models-repository");
     const { syncDefaultsToHermesConfig } = require("@/modules/hermes/lib/config-sync") as typeof import("@/modules/hermes/lib/config-sync");
     const m = createModel({ name: "M", provider: "anthropic", modelId: "x" });
     setDefaultModel("compression", m.id);
@@ -207,9 +169,9 @@ describe("syncDefaultsToHermesConfig", () => {
 
 describe("finalizeRootConfigOnDisk", () => {
   it("refreshes agent_root.config_yaml with model section after sync", () => {
-    const { createModel, setDefaultModel } = require("@/lib/models-repository") as typeof import("@/lib/models-repository");
+    const { createModel, setDefaultModel } = require("@/lib/models/models-repository") as typeof import("@/lib/models/models-repository");
     const { finalizeRootConfigOnDisk } = require("@/modules/hermes/lib/config-sync") as typeof import("@/modules/hermes/lib/config-sync");
-    const { getAgentRoot } = require("@/lib/agent-root-repository") as typeof import("@/lib/agent-root-repository");
+    const { getAgentRoot } = require("@/lib/agents/agent-root-repository") as typeof import("@/lib/agents/agent-root-repository");
 
     writeFileSync(
       join(fakeRoot, "config.yaml"),
@@ -265,7 +227,7 @@ describe("syncDefaultsToHermesConfig refuses a config.yaml it cannot parse", () 
   const MALFORMED = ["agent:", "  max_turns: 100", "  max_turns: 200", ""].join("\n");
 
   it("leaves the file byte-identical rather than overwriting it", () => {
-    const { createModel, setDefaultModel } = require("@/lib/models-repository") as typeof import("@/lib/models-repository");
+    const { createModel, setDefaultModel } = require("@/lib/models/models-repository") as typeof import("@/lib/models/models-repository");
     const { syncDefaultsToHermesConfig } = require("@/modules/hermes/lib/config-sync") as typeof import("@/modules/hermes/lib/config-sync");
     const configPath = join(fakeRoot, "config.yaml");
     writeFileSync(configPath, MALFORMED);
@@ -283,7 +245,7 @@ describe("syncDefaultsToHermesConfig refuses a config.yaml it cannot parse", () 
   });
 
   it("captures the pre-write content in a backup the caller can name", () => {
-    const { createModel, setDefaultModel } = require("@/lib/models-repository") as typeof import("@/lib/models-repository");
+    const { createModel, setDefaultModel } = require("@/lib/models/models-repository") as typeof import("@/lib/models/models-repository");
     const { syncDefaultsToHermesConfig } = require("@/modules/hermes/lib/config-sync") as typeof import("@/modules/hermes/lib/config-sync");
     const configPath = join(fakeRoot, "config.yaml");
     writeFileSync(configPath, MALFORMED);
@@ -305,7 +267,7 @@ describe("syncDefaultsToHermesConfig refuses a config.yaml it cannot parse", () 
   it("says which file it refused to write, and why", () => {
     const spy = jest.spyOn(console, "error").mockImplementation(() => {});
     try {
-    const { createModel, setDefaultModel } = require("@/lib/models-repository") as typeof import("@/lib/models-repository");
+    const { createModel, setDefaultModel } = require("@/lib/models/models-repository") as typeof import("@/lib/models/models-repository");
     const { syncDefaultsToHermesConfig } = require("@/modules/hermes/lib/config-sync") as typeof import("@/modules/hermes/lib/config-sync");
       writeFileSync(join(fakeRoot, "config.yaml"), MALFORMED);
       const m = createModel({

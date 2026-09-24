@@ -1,17 +1,14 @@
 // ═══════════════════════════════════════════════════════════════
-// first-run-steps.ts — what a brand-new install still has to do
+// first-run-steps.ts — what the dashboard latched about a first run
 // ═══════════════════════════════════════════════════════════════
 //
-// The dashboard on a fresh install is a wall of zeros: no processes, no
-// sessions, no missions, no memory, and a hardcoded green ONLINE badge next to
-// an agent that is not installed. Every widget is technically correct and the
-// screen says nothing about what to do first, which is where a stranger's first
-// install dies.
-//
-// The rule this encodes: an empty install should read as a checklist, not as a
-// broken one. The derivation lives here rather than in the panel so it can be
-// tested without rendering React, matching dashboard-error-dedup.ts and
-// dashboard-model-subtitle.ts alongside it.
+// The four-step checklist and FirstRunPanel went with the quests (T-0111, B17).
+// Two things stayed, with callers outside the checklist: AGENT_INSTALL_DOCS,
+// which AgentSetupNotice sends an operator with no agent to, and
+// settleFirstRunFacts, the gateway latch: one failed probe of the
+// fifteen-second gateway poll used to flip the dashboard's agent badge from
+// "runs through a gateway" to "not installed" and back (T-0099, D57). The
+// filename is kept because renaming it would churn every importer for no behaviour.
 
 /** Where an operator without an agent installed has to go. Matches README. */
 export const AGENT_INSTALL_DOCS =
@@ -20,72 +17,35 @@ export const AGENT_INSTALL_DOCS =
 export interface FirstRunFacts {
   /** Display name of the active agent framework, e.g. "Hermes". */
   frameworkName: string;
-  /**
-   * Whether that framework is actually installed and configured on this
-   * machine. False on a PatterStage install that has never had an agent.
-   */
+  /** Whether that framework is installed and configured on this machine. */
   frameworkAvailable: boolean;
+  /**
+   * A gateway is configured and answered the health probe (T-0092): with no
+   * local install this is where the work runs, and the badge has to say so.
+   */
+  gatewayReachable?: boolean;
+  gatewayUrl?: string | null;
+  /**
+   * A model the agent can call is configured. Not latched, and read by the
+   * dashboard rather than by this module (T-0099, D110).
+   */
+  modelConfigured?: boolean;
   sessionCount: number;
   missionCount: number;
 }
 
-export interface FirstRunStep {
-  id: "agent" | "mission" | "sessions";
-  title: string;
-  /** One sentence. The panel is a signpost, not documentation. */
-  detail: string;
-  href: string;
-  /** True when href leaves the app (agent install docs). */
-  external: boolean;
-  done: boolean;
-}
-
 /**
- * Show the checklist while the install has produced nothing at all, and keep
- * showing it for as long as there is no agent to dispatch to. Once a mission or
- * a session exists AND the agent is configured, the operator is past first run
- * and the panel gets out of the way for good.
+ * A gateway that has answered once stays reachable, and its address is kept
+ * when the next reading has none. Nothing else is latched: counts, framework
+ * and model follow the newest reading, because the operator can change those.
  */
-export function shouldShowFirstRun(facts: FirstRunFacts): boolean {
-  if (!facts.frameworkAvailable) return true;
-  return facts.sessionCount === 0 && facts.missionCount === 0;
-}
-
-/** The checklist, in the order the steps actually have to happen. */
-export function firstRunSteps(facts: FirstRunFacts): FirstRunStep[] {
-  const agent = facts.frameworkName || "your agent";
-  return [
-    {
-      id: "agent",
-      title: facts.frameworkAvailable ? `${agent} is installed` : `Install ${agent}`,
-      detail: facts.frameworkAvailable
-        ? `PatterStage found a configured ${agent} install on this machine.`
-        : `PatterStage is the control plane; ${agent} is the agent that does the work, and nothing can be dispatched until it is installed on this machine.`,
-      href: AGENT_INSTALL_DOCS,
-      external: true,
-      done: facts.frameworkAvailable,
-    },
-    {
-      id: "mission",
-      title: facts.missionCount > 0 ? "First mission dispatched" : "Dispatch your first mission",
-      detail:
-        facts.missionCount > 0
-          ? "Missions are how you give the agent work. Compose, schedule and cancel them here."
-          : "Pick one of the bundled templates, review the prompt it fills in, and send it.",
-      href: "/orchestration/missions",
-      external: false,
-      done: facts.missionCount > 0,
-    },
-    {
-      id: "sessions",
-      title: facts.sessionCount > 0 ? "Transcripts are arriving" : "Read what the agent did",
-      detail:
-        facts.sessionCount > 0
-          ? "Every run leaves a transcript you can read back."
-          : "Once a run finishes, its full transcript shows up in the session browser.",
-      href: "/sessions",
-      external: false,
-      done: facts.sessionCount > 0,
-    },
-  ];
+export function settleFirstRunFacts(prev: FirstRunFacts | null, next: FirstRunFacts): FirstRunFacts {
+  if (!prev) return next;
+  const reachable = next.gatewayReachable === true || prev.gatewayReachable === true;
+  if (!reachable) return next;
+  return {
+    ...next,
+    gatewayReachable: true,
+    gatewayUrl: next.gatewayUrl ?? prev.gatewayUrl ?? null,
+  };
 }

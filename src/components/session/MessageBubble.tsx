@@ -50,6 +50,12 @@ export interface SessionData {
    * The detail page links to the mission page when this is present.
    */
   missionId?: string | null;
+  /** How it ended, and why (T-0105, D30). */
+  status?: string;
+  exitCode?: number | null;
+  error?: string | null;
+  /** True when older messages were left behind by the message cap (D40). */
+  truncated?: boolean;
 }
 
 // ── MessageBubble ────────────────────────────────────────────
@@ -58,24 +64,28 @@ export function MessageBubble({
   msg,
   index,
   messageRefs,
+  expandAll = null,
 }: {
   msg: SessionMessage;
   index: number;
   messageRefs: React.MutableRefObject<Map<number, HTMLDivElement>>;
+  /**
+   * Expand or collapse every bubble at once. A non-null change sets this
+   * bubble's own state; toggling one afterwards still works, because reading a
+   * transcript is not an all-or-nothing act (T-0105, D38).
+   */
+  expandAll?: boolean | null;
 }) {
   const [expanded, setExpanded] = useState(false);
-  // Use the shared `useCopyToClipboard` hook (sister to the
-  // PersonalityCard migration in operations/personalities/page.tsx) so
-  // the "[copied, setCopied] + useRef<setTimeout> + unmount cleanup"
-  // pattern lives in exactly one place. The 1500ms reset matches the
-  // pre-refactor inline timer (the Personalities site uses 2000ms — a
-  // different value passed via the hook's `resetMs` option).
+  // Adjusted during render rather than in an effect: React's own pattern for
+  // "a prop changed and this state follows it", and the one that has the new
+  // value on screen in the same commit as the click that asked for it.
+  const [lastExpandAll, setLastExpandAll] = useState<boolean | null>(null);
+  if (expandAll !== null && expandAll !== lastExpandAll) {
+    setLastExpandAll(expandAll);
+    setExpanded(expandAll);
+  }
   const [copied, copy] = useCopyToClipboard({ resetMs: 1500 });
-  // Use the shared `getMessageRole` helper so the "missing/empty role
-  // → unknown" defensive default lives in exactly one place. The
-  // session detail page and the helper itself both consume it, so any
-  // future change (e.g. handling a "tool_call_only" sentinel) lands
-  // here once, not in N+1 inline copies.
   const role = getMessageRole(msg);
   const content =
     typeof msg.content === "string"
@@ -96,36 +106,36 @@ export function MessageBubble({
         if (el) messageRefs.current.set(index, el);
         else messageRefs.current.delete(index);
       }}
-      className={`rounded-xl border ${config.bg} overflow-hidden`}
+      className={`rounded-ps-lg border ${config.bg} overflow-hidden`}
     >
       <button
         onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center justify-between px-4 py-2 border-b border-white/5 hover:bg-white/[0.02] transition-colors text-left"
+        className="w-full flex items-center justify-between px-4 py-2 border-b border-ps-edge hover:bg-ps-surface-raised transition-colors text-left"
       >
         <div className="flex items-center gap-2 min-w-0 flex-1">
           <span className={config.color}>{config.icon}</span>
-          <span className={`text-xs font-mono font-bold ${config.color}`}>
+          <span className={`text-micro font-mono font-bold ${config.color}`}>
             {config.label}
           </span>
           {msg.tool_call_id && (
-            <span className="text-xs font-mono text-ps-text-muted bg-white/5 px-1.5 py-0.5 rounded">
+            <span className="text-micro font-mono text-ps-text-muted bg-ps-surface-raised px-1.5 py-0.5 rounded-ps-sm">
               {msg.tool_call_id.slice(0, 12)}
             </span>
           )}
           {msg.name && (
-            <span className="text-xs font-mono text-neon-green">
+            <span className="text-micro font-mono text-neon-green">
               {String(msg.name)}
             </span>
           )}
           {!expanded && (
-            <span className="text-xs text-ps-text-muted font-mono truncate ml-1">
+            <span className="text-micro text-ps-text-muted font-mono truncate ml-1">
               {summary}
             </span>
           )}
         </div>
         <div className="flex items-center gap-1 flex-shrink-0 ml-2">
           {isLong && (
-            <span className="text-xs font-mono text-ps-text-faint mr-1">
+            <span className="text-micro font-mono text-ps-text-faint mr-1">
               {(content.length / 1024).toFixed(1)}KB
             </span>
           )}
@@ -141,7 +151,7 @@ export function MessageBubble({
           <div className="flex justify-end mb-2">
             <button
               onClick={handleCopy}
-              className="p-1 rounded text-ps-text-muted hover:text-ps-text-secondary transition-colors"
+              className="p-1 rounded-ps-sm text-ps-text-muted hover:text-ps-text-secondary transition-colors"
               title="Copy"
             >
               {copied ? (
@@ -151,12 +161,12 @@ export function MessageBubble({
               )}
             </button>
           </div>
-          <pre className="text-sm text-ps-text-primary font-mono whitespace-pre-wrap break-words">
+          <pre className="text-body text-ps-text-primary font-mono whitespace-pre-wrap break-words">
             {content || "(no content)"}
           </pre>
           {Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0 && (
-            <div className="mt-3 pt-3 border-t border-white/5 space-y-2">
-              <div className="text-xs font-mono text-ps-text-muted uppercase tracking-widest">
+            <div className="mt-3 pt-3 border-t border-ps-edge-hairline space-y-2">
+              <div className="text-micro font-mono text-ps-text-muted uppercase tracking-widest">
                 Tool Calls ({msg.tool_calls.length})
               </div>
               {msg.tool_calls.map((tc: unknown, i: number) => {
@@ -169,7 +179,7 @@ export function MessageBubble({
                 return (
                   <div
                     key={tcKey}
-                    className="bg-dark-900/50 rounded-lg p-3 text-xs font-mono"
+                    className="bg-ps-surface-panel rounded-ps-md p-3 text-micro font-mono"
                   >
                     <span className="text-neon-green">{fnName}</span>
                     <pre className="mt-1 text-ps-text-muted whitespace-pre-wrap">

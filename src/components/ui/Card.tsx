@@ -2,8 +2,10 @@
 // Card Component
 // ═══════════════════════════════════════════════════════════════
 
+import { statusToneClasses } from "@/lib/ui/theme";
 import type { AccentColor } from "@/types/console";
 import GlowSurface from "@/components/ui/GlowSurface";
+import type { SurfaceElement } from "@/components/ui/GlowSurface";
 
 interface CardProps {
   children: React.ReactNode;
@@ -14,6 +16,31 @@ interface CardProps {
   glowAnimated?: boolean;
   hover?: boolean;
   padding?: "none" | "sm" | "md" | "lg";
+  /**
+   * Which rung the card sits on. `panel` is the default and is what a card
+   * on the PAGE is. `raised` is for one nested inside another surface, where
+   * the panel rung would be the same fill as its own parent and the card
+   * would read as a rule rather than a surface (T-0122).
+   */
+  variant?: "panel" | "raised";
+  /**
+   * The element to render. A card is usually a div, but nine of the sites
+   * this primitive absorbs are a `<section>`, `<header>` or `<article>`, and
+   * rendering those as a div would delete nine landmarks from the
+   * accessibility tree. Container elements only: a card is a box, and a
+   * `<form>` or a `<button>` needs props this does not carry (T-0122).
+   */
+  as?: SurfaceElement;
+  /**
+   * An id and a test id pass through to the element.
+   *
+   * A primitive that cannot be identified cannot be adopted: the first screen
+   * converted onto Card (U9's Automation view) needed to name its rows, and
+   * without these the only way to keep a `data-testid` was to keep the div
+   * (T-0123).
+   */
+  id?: string;
+  "data-testid"?: string;
 }
 
 const paddingMap = {
@@ -31,16 +58,24 @@ export default function Card({
   glowAnimated = false,
   hover = false,
   padding = "md",
+  variant = "panel",
+  as,
+  id,
+  "data-testid": testId,
 }: CardProps) {
   const hoverClass = hover
-    ? "hover:border-white/30 transition-colors cursor-pointer"
+    ? "hover:border-ps-edge-emphasis transition-colors cursor-pointer"
     : "";
   const padClass = paddingMap[padding];
 
-  const innerClasses = `rounded-xl border border-white/10 bg-dark-900/50 min-w-0 ${padClass} ${hoverClass} ${className}`;
+  const fill = variant === "raised" ? "bg-ps-surface-raised" : "bg-ps-surface-panel";
+  const innerClasses = `rounded-ps-lg border border-ps-edge-hairline ${fill} min-w-0 ${padClass} ${hoverClass} ${className}`;
 
   return (
     <GlowSurface
+      as={as}
+      id={id}
+      data-testid={testId}
       accent={glow}
       intensity={glowIntensity}
       animated={glowAnimated}
@@ -65,11 +100,14 @@ export function StatusDot({
   status: "online" | "warning" | "error" | "idle";
   pulse?: boolean;
 }) {
+  // The ladder. `online` is the OK rung rather than a green of its own, and
+  // `error` stops being bg-red-500 — a raw ramp step that was one of two reds
+  // the product used for the same idea (T-0120).
   const colors = {
-    online: "bg-neon-green",
-    warning: "bg-neon-orange",
-    error: "bg-red-500",
-    idle: "bg-white/30",
+    online: statusToneClasses.ok.dot,
+    warning: statusToneClasses.warn.dot,
+    error: statusToneClasses.fail.dot,
+    idle: statusToneClasses.idle.dot,
   };
 
   return (

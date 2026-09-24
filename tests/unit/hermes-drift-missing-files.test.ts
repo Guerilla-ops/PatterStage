@@ -1,5 +1,5 @@
-/* eslint-disable @typescript-eslint/no-require-imports */
 /** @jest-environment node */
+/* eslint-disable @typescript-eslint/no-require-imports */
 
 // ═══════════════════════════════════════════════════════════════
 // Acceptance oracle for T-0041: Pull must be able to converge what
@@ -23,25 +23,12 @@ import { mkdtempSync, mkdirSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 
-import { execBaselineSchema } from "../helpers/baseline-db";
+import { openBaselineDb } from "../helpers/baseline-db";
 
 let testDb: import("better-sqlite3").Database | null = null;
 let hermesRoot = "";
 
-function loadRealBetterSqlite3(): typeof import("better-sqlite3") {
-  return require("better-sqlite3/lib/index.js") as typeof import("better-sqlite3");
-}
-
-jest.mock("@/lib/db", () => {
-  const actualCrypto = jest.requireActual("crypto") as typeof import("crypto");
-  return {
-    getDb: () => testDb!,
-    inTransaction: <T,>(fn: () => T) => testDb!.transaction(fn)(),
-    uuid: () => actualCrypto.randomUUID(),
-    now: () => new Date().toISOString(),
-    ensureDb: () => undefined,
-  };
-});
+jest.mock("@/lib/db", () => require("../helpers/baseline-db").dbSingletonMock(() => testDb));
 
 jest.mock("@/modules/hermes/lib/profile-paths", () => {
   const actual = jest.requireActual(
@@ -63,7 +50,7 @@ function profiles() {
 }
 
 function rootRepo() {
-  return require("@/lib/agent-root-repository") as typeof import("@/lib/agent-root-repository");
+  return require("@/lib/agents/agent-root-repository") as typeof import("@/lib/agents/agent-root-repository");
 }
 
 /** A profile whose disk root holds SOUL, AGENTS and config.yaml and nothing else. */
@@ -87,12 +74,7 @@ function seedProfileWithNoMemories(slug: string): string {
 }
 
 beforeEach(() => {
-  const Database = loadRealBetterSqlite3();
-  testDb = new (Database as unknown as new (path: string) => import("better-sqlite3").Database)(
-    ":memory:",
-  );
-  testDb.pragma("foreign_keys = ON");
-  execBaselineSchema(testDb);
+  testDb = openBaselineDb();
   hermesRoot = mkdtempSync(join(tmpdir(), "ps-drift-missing-"));
   writeFileSync(join(hermesRoot, "config.yaml"), "skills:\n  disabled: []\n");
 });
@@ -169,6 +151,20 @@ describe("profile drift ignores files that are absent from disk", () => {
     const report = drift().detectProfileDrift("converge");
     expect(report.fields).toEqual([]);
     expect(report.drifted).toBe(false);
+  });
+});
+
+describe("root drift on a poisoned row is a banner, not a 500", () => {
+  it("reports config.yaml drifted with the parse fault as syncError", () => {
+    // T-0086: assembleRootConfig throws on an unparseable stored config; the
+    // drift page is where the operator learns that, so it must render.
+    rootRepo().updateAgentRoot({ configYaml: "model:\n  a: 1\nmodel:\n  b: 2\n" });
+
+    const entry = drift().detectRootDrift();
+
+    expect(entry.drifted).toBe(true);
+    expect(entry.fields).toEqual(["config.yaml"]);
+    expect(entry.syncError).toMatch(/did not parse/);
   });
 });
 

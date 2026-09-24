@@ -1,11 +1,11 @@
-import type { NextRequest } from "next/server";
 /** @jest-environment node */
+import type { NextRequest } from "next/server";
 
 jest.mock("@/modules/hermes/lib/agent-runtime", () => ({
   getActiveHermesPaths: () => ({ logs: "/tmp/hermes-logs-test" }),
 }));
 
-jest.mock("@/lib/api-auth", () => ({
+jest.mock("@/lib/api/api-auth", () => ({
 }));
 
 const mockExistsSync = jest.fn();
@@ -62,6 +62,41 @@ describe("GET /api/logs sanitisation", () => {
     expect(names).toContain("ch-backup");
     const ch = body.data.availableLogs.find((x: { name: string }) => x.name === "ch-backup");
       expect(ch.group).toBe("system");
+  });
+});
+
+describe("GET /api/logs on a fresh install (T-0087)", () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it("a logs directory with no files says so calmly, with noLogsYet", async () => {
+    // Driving a clean isolated instance found this: the directory existed
+    // (empty) so the dir-missing branch never fired, and the page showed the
+    // red "Log file 'agent.log' not found" banner for a normal condition.
+    mockExistsSync.mockImplementation((p: unknown) => String(p).replace(/\\/g, "/").endsWith("hermes-logs-test"));
+    mockReaddirSync.mockReturnValue([]);
+
+    const { GET } = await import("@/app/api/logs/route");
+    const res = await GET(new Request("http://localhost/api/logs?name=agent") as unknown as NextRequest);
+    const body = (await res.json()) as { error: string; data: { availableLogs: unknown[]; noLogsYet?: boolean } };
+
+    expect(res.status).toBe(404);
+    expect(body.error).toMatch(/normal on a fresh install/i);
+    expect(body.data.noLogsYet).toBe(true);
+    expect(body.data.availableLogs).toEqual([]);
+  });
+
+  it("a missing file among OTHER files is still the plain 404 with the list", async () => {
+    setupExistsForLog("gateway");
+    mockReaddirSync.mockReturnValue(["gateway.log"]);
+    mockStatSync.mockReturnValue({ size: 10, mtime: new Date("2026-01-02") });
+
+    const { GET } = await import("@/app/api/logs/route");
+    const res = await GET(new Request("http://localhost/api/logs?name=agent") as unknown as NextRequest);
+    const body = (await res.json()) as { error: string; data: { noLogsYet?: boolean } };
+
+    expect(res.status).toBe(404);
+    expect(body.error).toMatch(/agent\.log.*not found/);
+    expect(body.data.noLogsYet).toBeUndefined();
   });
 });
 

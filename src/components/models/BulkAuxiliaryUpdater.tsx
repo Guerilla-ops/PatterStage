@@ -8,6 +8,8 @@ import { useState, useCallback } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { AUXILIARY_TASK_TYPES, type TaskType } from "@/lib/models/task-types";
 import { pluralise } from "@/lib/utils";
+import Button from "@/components/ui/Button";
+import Card from "@/components/ui/Card";
 import ModelSelectDropdown from "@/components/models/ModelSelectDropdown";
 
 interface BulkAuxiliaryUpdaterProps {
@@ -54,19 +56,21 @@ export default function BulkAuxiliaryUpdater({
   }, [applying, mode, selected, targetModelId, onChange]);
 
   return (
-    <div className="rounded-xl border border-white/10 bg-dark-900/50 overflow-hidden">
+    // Raised: this sits inside the Agent Default card, and the panel rung on
+    // the panel rung read as a rule rather than a surface (T-0122).
+    <Card variant="raised" padding="none" className="overflow-hidden">
       {/* Collapsed header */}
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
         disabled={disabled}
-        className="w-full flex items-center justify-between px-4 py-2.5 text-left hover:bg-white/5 transition-colors disabled:opacity-50"
+        className="w-full flex items-center justify-between px-4 py-2.5 text-left hover:bg-ps-surface-raised transition-colors disabled:opacity-50"
       >
         <div className="flex items-center gap-2">
-          <span className="text-xs font-mono text-ps-text-secondary uppercase tracking-widest">
+          <span className="text-micro font-mono text-ps-text-secondary uppercase tracking-widest">
             Bulk Set Auxiliaries
           </span>
-          <span className="text-xs font-mono text-ps-text-muted">
+          <span className="text-micro font-mono text-ps-text-muted">
             ({AUXILIARY_TASK_TYPES.length} slots)
           </span>
         </div>
@@ -79,10 +83,10 @@ export default function BulkAuxiliaryUpdater({
 
       {/* Expanded panel */}
       {expanded && (
-        <div className="px-4 pb-4 pt-1 border-t border-white/5 space-y-3">
+        <div className="px-4 pb-4 pt-1 border-t border-ps-edge-hairline space-y-3">
           {/* Model selector — shared chrome with DefaultsGrid via ModelSelectDropdown */}
           <div>
-            <label className="block text-xs font-mono text-ps-text-muted uppercase tracking-widest mb-1">
+            <label className="block text-micro font-mono text-ps-text-muted uppercase tracking-widest mb-1">
               Target Model
             </label>
             <ModelSelectDropdown
@@ -108,7 +112,7 @@ export default function BulkAuxiliaryUpdater({
                 disabled={disabled}
                 className="accent-neon-purple"
               />
-              <span className="text-xs font-mono text-ps-text-secondary">ALL</span>
+              <span className="text-micro font-mono text-ps-text-secondary">ALL</span>
             </label>
             <label className="flex items-center gap-2 cursor-pointer">
               <input
@@ -119,7 +123,7 @@ export default function BulkAuxiliaryUpdater({
                 disabled={disabled}
                 className="accent-neon-purple"
               />
-              <span className="text-xs font-mono text-ps-text-secondary">CUSTOM</span>
+              <span className="text-micro font-mono text-ps-text-secondary">CUSTOM</span>
             </label>
           </div>
 
@@ -129,7 +133,7 @@ export default function BulkAuxiliaryUpdater({
               {AUXILIARY_TASK_TYPES.map((taskType) => (
                 <label
                   key={taskType}
-                  className="flex items-center gap-1.5 cursor-pointer hover:bg-white/5 px-2 py-1 rounded transition-colors"
+                  className="flex items-center gap-1.5 cursor-pointer hover:bg-ps-surface-raised px-2 py-1 rounded-ps-sm transition-colors"
                 >
                   <input
                     type="checkbox"
@@ -138,7 +142,7 @@ export default function BulkAuxiliaryUpdater({
                     disabled={disabled}
                     className="accent-neon-purple w-3 h-3"
                   />
-                  <span className="text-xs font-mono text-ps-text-secondary truncate">
+                  <span className="text-micro font-mono text-ps-text-secondary truncate">
                     {taskType}
                   </span>
                 </label>
@@ -147,16 +151,17 @@ export default function BulkAuxiliaryUpdater({
           )}
 
           {/* Apply button */}
-          <button
-            type="button"
+          <Button
+            variant="primary"
+            color="purple"
+            className="w-full"
             onClick={() => void handleApply()}
             disabled={disabled || applying || !targetModelId}
-            className="w-full h-9 bg-neon-purple/10 border border-neon-purple/30 text-neon-purple text-xs font-mono rounded-lg hover:bg-neon-purple/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {applying ? "Applying…" : `Apply to ${selected.size} slot${pluralise(selected.size)}`}
-          </button>
+          </Button>
         </div>
       )}
-    </div>
+    </Card>
   );
 }

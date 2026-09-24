@@ -7,12 +7,15 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { getDb } from "@/lib/db";
+import * as questEval from "@/lib/quests/evaluate";
+import { readQuestLatch } from "@/lib/quests/quest-latch";
 import {
   computeStreaks,
   evaluateAchievements,
   successRate,
   type Achievement,
   type RawMetrics,
+  type StoreFacts,
 } from "./derive";
 import { getAgentPerformance, type AgentPerformance } from "./agent-stats";
 import {
@@ -22,7 +25,7 @@ import {
   distinctEventTypeCount,
   distinctActiveDays,
 } from "@/lib/analytics/analytics-repository";
-import type { AnalyticsEventType } from "@/lib/analytics/event-types";
+import { ANALYTICS_EVENT_TYPES, type AnalyticsEventType } from "@/lib/analytics/event-types";
 
 interface DailyPoint {
   date: string;
@@ -74,6 +77,8 @@ export interface DashboardStats {
   errors24h: number;
   streak: { current: number; longest: number };
   achievements: Achievement[];
+  /** The quest programme, evaluated from the same metrics as the achievements. */
+  quests: questEval.QuestProgress;
   agents: AgentPerformance[];
   throughput: ThroughputPoint[]; // last 30 days
   runActivity: DailyPoint[]; // last 91 days (heatmap)
@@ -137,7 +142,17 @@ function scalar(sql: string, ...params: unknown[]): number {
   }
 }
 
+/** The dashboard's stats. One read; the raw metrics stay inside. */
 export function getDashboardStats(): DashboardStats {
+  return computeDashboard().stats;
+}
+
+/**
+ * The stats AND the raw metrics they were derived from. The quest evaluator
+ * (B17) reads the ledger and the store facts from the same poll the dashboard
+ * already makes, at zero extra requests (T-0098).
+ */
+export function computeDashboard(): { stats: DashboardStats; raw: RawMetrics } {
   // ── missions ──
   // A status='queued' mission is only really IN the dispatch queue when
   // queued_for_run=1; otherwise it's a saved draft. Split them so the Mission
@@ -284,6 +299,24 @@ export function getDashboardStats(): DashboardStats {
   // start unlocked-at-0 rather than erroring.
   const evt = countByType();
   const evtCount = (t: AnalyticsEventType): number => evt[t] ?? 0;
+  // The ledger: every type in the taxonomy with its all-time count, zero when
+  // never recorded, so a reader can index it without a guard.
+  const eventCounts: Partial<Record<AnalyticsEventType, number>> = {};
+  for (const t of ANALYTICS_EVENT_TYPES) eventCounts[t] = evtCount(t);
+  // The store facts. Each is a defensive scalar (0 on a table this database
+  // does not have yet). A memory provider counts as configured only once the
+  // operator saved it: the migration seeds an active Hindsight row as a guess,
+  // and the repository tells a guess from a save by updated_at (T-0077).
+  const facts: StoreFacts = {
+    profiles: scalar("SELECT COUNT(*) AS v FROM agent_profiles"),
+    models: scalar("SELECT COUNT(*) AS v FROM models"),
+    credentials: scalar("SELECT COUNT(*) AS v FROM credentials"),
+    workflows: scalar("SELECT COUNT(*) AS v FROM composer_workflows"),
+    memoryConfigured:
+      scalar(
+        "SELECT COUNT(*) AS v FROM memory_providers WHERE is_active = 1 AND enabled = 1 AND updated_at <> created_at",
+      ) > 0,
+  };
   // Fold event-active days into the streak set so chat/story/skill-only days
   // (with no run completion) still keep the daily streak alive.
   for (const d of distinctActiveDays()) activeDates.add(d);
@@ -321,10 +354,17 @@ export function getDashboardStats(): DashboardStats {
     chatMessages: evtCount("chat.message_sent"),
     distinctProfiles: distinctProfileCount(),
     distinctEventTypes: distinctEventTypeCount(),
+    eventCounts,
+    facts,
   };
   const achievements = evaluateAchievements(raw);
+  // The quests come second and read the same `raw`, so the whole programme
+  // costs this poll one extra preference read and no extra request. The order
+  // matters: the four chain achievements measure the quest PROOFS, so they must
+  // be evaluated before anything consults the latch.
+  const quests = questEval.evaluateQuests(raw, readQuestLatch(), new Date().toISOString());
 
-  return {
+  const stats: DashboardStats = {
     generatedAt: new Date().toISOString(),
     missions,
     runs,
@@ -334,6 +374,7 @@ export function getDashboardStats(): DashboardStats {
     errors24h,
     streak,
     achievements,
+    quests,
     agents: getAgentPerformance(),
     throughput: lastNDates(30).map((date) => ({
       date,
@@ -343,4 +384,5 @@ export function getDashboardStats(): DashboardStats {
     runActivity: lastNDates(91).map((date) => ({ date, value: completedByDay.get(date) ?? 0 })),
     tokensByDay: lastNDates(30).map((date) => ({ date, value: tokensByDay.get(date) ?? 0 })),
   };
+  return { stats, raw };
 }

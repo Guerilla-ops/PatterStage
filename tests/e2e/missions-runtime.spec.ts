@@ -13,7 +13,7 @@ import { test, expect } from "@playwright/test";
 // cadence they chose, pause it, reload to prove it survived the round trip to
 // the database, and remove it again. Every affordance the old file asserted is
 // still touched on the way through: the Missions heading, the New Mission
-// button, the Scheduled missions section, the "every 30m" preset, the Create
+// button, the Schedules section, the "every 30m" preset, the Create
 // schedule button, the Scripts page and its sidebar link, so nothing it
 // covered was traded away for the conversion.
 //
@@ -45,13 +45,19 @@ test.describe("Scheduling a mission", () => {
     });
     expect(saved.ok()).toBeTruthy();
 
-    await page.goto("/orchestration/missions");
-    await expect(page.getByRole("heading", { name: "Missions", exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: /New Mission/i })).toBeVisible();
+    // The clocks moved. Decision 9 (U9, T-0123) made one Automation view out of
+    // the schedules section at the foot of Missions and the schedule column on
+    // Scripts, because the section listed PatterStage's own table and could not
+    // see a script scheduled into the host's crontab. The journey is unchanged
+    // and so is every assertion below it; only the address is different.
+    await page.goto("/work/automation");
+    await expect(page.getByRole("heading", { name: "Automation", exact: true })).toBeVisible();
 
     const scheduled = page
       .locator("section")
-      .filter({ has: page.getByRole("heading", { name: "Scheduled missions", exact: true }) });
+      // "Schedules", since the list holds script rows as well as mission ones
+      // and the heading stopped naming only one of them (T-0114).
+      .filter({ has: page.getByRole("heading", { name: "Schedules", exact: true }) });
     await expect(scheduled).toBeVisible();
 
     // ── Open the create form ────────────────────────────────────────────────
@@ -63,11 +69,21 @@ test.describe("Scheduling a mission", () => {
 
     // The saved mission is offered by name. This is the assertion the old
     // "presets are visible" test could not make: the form is wired to real data.
-    const missionSelect = form
-      .locator("select")
-      .filter({ has: page.getByRole("option", { name: missionName }) });
+    //
+    // A LISTBOX, not a native <select>, since U9 (T-0123) put this form on the
+    // Field Kit. `ui/field/Select` is the product's accessible dropdown, and
+    // driving it the way a person does - open it, choose the option - is a
+    // stronger reading than `selectOption` on a control the operator never
+    // sees: the native one could not be reached by keyboard in the house style
+    // at all, which is why the Kit exists.
+    // A button with aria-haspopup="listbox", which is what ui/field/Select
+    // renders: the trigger is a button and the options are a listbox beneath
+    // it, rather than a native <select> the house style cannot reach.
+    const missionSelect = form.getByRole("button", { name: "Mission" });
     await expect(missionSelect).toBeVisible({ timeout: 15_000 });
-    await missionSelect.selectOption({ label: missionName });
+    await missionSelect.click();
+    await form.getByRole("option", { name: missionName }).click();
+    await expect(missionSelect).toContainText(missionName);
 
     await form.getByPlaceholder("daily digest").fill(scheduleName);
 
@@ -107,19 +123,24 @@ test.describe("Scheduling a mission", () => {
     await expect(row).toContainText("paused");
 
     // ── Remove ──────────────────────────────────────────────────────────────
-    // Positional, because the delete control is an unlabelled icon button: it
-    // renders a Trash2 glyph with no text and no aria-label, so it has no
-    // accessible name to ask for. Recorded rather than worked around silently.
-    await row.getByRole("button").last().click();
+    // The delete control has a name now, and takes two clicks: it is a
+    // ConfirmButton, per row, and the armed button is not disabled (T-0104,
+    // D73). The positional locator and the note about an unnamed icon button
+    // that used to be here are both obsolete.
+    const del = row.getByRole("button", { name: `Delete the schedule "${scheduleName}"` });
+    await del.click();
+    await expect(del).toContainText("Confirm?");
+    await expect(scheduled.getByText(scheduleName, { exact: true })).toHaveCount(1);
+    await del.click();
     await expect(scheduled.getByText(scheduleName, { exact: true })).toHaveCount(0, {
       timeout: 15_000,
     });
   });
 
-  test("reach Scripts from the Orchestration sidebar", async ({ page }) => {
-    await page.goto("/orchestration/missions");
+  test("reach Scripts from the Work section of the rail", async ({ page }) => {
+    await page.goto("/work/missions");
     await page.getByRole("link", { name: "Scripts", exact: true }).first().click();
-    await expect(page).toHaveURL(/\/orchestration\/scripts$/);
+    await expect(page).toHaveURL(/\/work\/scripts$/);
     await expect(page.getByRole("heading", { name: "Scripts", exact: true })).toBeVisible();
   });
 });

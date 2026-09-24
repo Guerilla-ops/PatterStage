@@ -1,3 +1,4 @@
+/** @jest-environment node */
 /**
  * sessions-api-helpers — unit tests for the pure helpers extracted
  * from /api/sessions/route.ts. The route handler isn't invoked here;
@@ -5,8 +6,6 @@
  * take a `NextRequest` and only read from `request.url`, so a
  * constructed request with a synthetic URL is sufficient.
  */
-
-/** @jest-environment node */
 
 import { NextRequest } from "next/server";
 
@@ -90,12 +89,19 @@ describe("parseSessionQuery", () => {
     expect(result.source).toBe("cron");
   });
 
-  it("ignores unknown enum values rather than throwing", () => {
-    const result = parseSessionQuery(
-      makeRequest("agentType=nope&source=not-a-source"),
-    );
+  it("ignores an unknown agent type rather than throwing", () => {
+    const result = parseSessionQuery(makeRequest("agentType=nope"));
+
     expect(result.agentType).toBeUndefined();
-    expect(result.source).toBeUndefined();
+  });
+
+  it("accepts a source the UI has no word for, and refuses one that is not a source", () => {
+    // The column is free text: running it through an enum silently dropped
+    // the filter, so asking for subagent sessions returned all of them
+    // (T-0105, D29). Shape is what is checked now, not membership.
+    expect(parseSessionQuery(makeRequest("source=subagent")).source).toBe("subagent");
+    expect(parseSessionQuery(makeRequest("source=not a source")).source).toBeUndefined();
+    expect(parseSessionQuery(makeRequest("source=")).source).toBeUndefined();
   });
 
   it("caps limit at 100 to prevent unbounded queries", () => {
@@ -181,5 +187,23 @@ describe("triggerSyncOnce", () => {
     } finally {
       jest.useRealTimers();
     }
+  });
+});
+
+describe("parseSessionQuery bounds (T-0088)", () => {
+  // Round 6 audit: `?limit=-1` reached SQLite as LIMIT -1 (unlimited), the
+  // cap bypass; `?limit=abc` bound NaN and 500'd.
+  it("clamps a negative limit to one, not to unlimited", () => {
+    expect(parseSessionQuery(makeRequest("limit=-1")).limit).toBe(1);
+  });
+  it("defaults a junk limit instead of binding NaN", () => {
+    expect(parseSessionQuery(makeRequest("limit=abc")).limit).toBe(50);
+  });
+  it("floors a junk or negative offset at zero", () => {
+    expect(parseSessionQuery(makeRequest("offset=abc")).offset).toBe(0);
+    expect(parseSessionQuery(makeRequest("offset=-5")).offset).toBe(0);
+  });
+  it("GREEN CONTROL: the ceiling still holds", () => {
+    expect(parseSessionQuery(makeRequest("limit=1000")).limit).toBe(100);
   });
 });

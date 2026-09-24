@@ -20,7 +20,7 @@
 // the data hook's, and the data hook must exist before the two write
 // paths that refetch through it.
 //
-// MissionRow / MissionDetail moved to src/hooks/missions-page-types.ts
+// MissionRow / MissionDetail live in src/hooks/missions-page-types.ts
 // so the slices can name them without importing this file.
 
 "use client";
@@ -41,38 +41,17 @@ export function useMissionsPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
 
-  // Close the create/edit mission composer. The same `setEditingId(null)`
-  // + `setShowCreate(false)` pair appears at 3 sites — the 2 success
-  // branches of `handleCreate` (update + promote) and the page's
-  // `handleCloseCreate` (Sheet onClose, MissionComposerActions onClose,
-  // MissionCreateForm onClose). Centralising it here keeps the 3 sites
-  // in lockstep if a future "clear form fields" or "dismiss category"
-  // reset is added — a single edit here updates all 3.
   const closeComposer = useCallback(() => {
     setEditingId(null);
     setShowCreate(false);
   }, []);
 
-  // Open the create mission composer (fresh-create mode, not edit).
-  // The page's `<Button onClick={() => setShowCreate(true)}>` "New Mission"
-  // header action is the canonical caller — a named callback keeps the
-  // action bar's open-mission click in lockstep with `closeComposer`'s
-  // close-mission click, and groups the 2 sibling open/close callbacks
-  // next to each other. Mirrors the `openAgentCreate` / `closeAgentModal`
-  // pattern that session 114 promoted in `cron/page.tsx` (see commit
-  // `5f0ec5a` "openCreate/openEdit callbacks"). The 4 `setShowCreate(true)`
-  // sites in the slices (handleEdit, handleDuplicateMission,
-  // handleTemplateSelect, fetchData's template-apply path) are NOT this
-  // callback — they all do additional state mutations (set editing,
-  // populate form, etc.) before opening. openCreate is the single-setter
-  // "open fresh" path used by the page's "New Mission" button only.
+  // The page's "New Mission" button only; the slices' own open paths set
+  // editing state or populate the form before opening.
   const openCreate = useCallback(() => {
     setShowCreate(true);
   }, []);
 
-  // Composer form state (every `new*` field) + its setters, the typed
-  // field-setter map, the dispatch payload builder, the two form-
-  // population helpers, and the three composer-local effects.
   // showCreate/editingId are passed in so the visibility-gated effects
   // (last-category restore, default-agent autofill) can read them.
   const composer = useMissionComposer({ showCreate, editingId });
@@ -123,7 +102,6 @@ export function useMissionsPage() {
     missions: data.missions,
     templates: data.templates,
     fetchData: data.fetchData,
-    missionCounts: filtering.missionCounts,
     showCreate,
     setShowCreate,
     editingId,
@@ -167,6 +145,8 @@ export function useMissionsPage() {
     openCreate,
     closeComposer,
     handleSaveAsTemplate: templateActions.handleSaveAsTemplate,
+    overwriteTemplateName: templateActions.overwriteTemplateName,
+    missionsLoadError: data.missionsLoadError,
     dispatching: dispatch.dispatching,
     cancellingMissionId: dispatch.cancellingMissionId,
     handleTemplateSelect: templateActions.handleTemplateSelect,
@@ -189,6 +169,36 @@ export function useMissionsPage() {
     templateColor: templateState.templateColor,
     setTemplateColor: templateState.setTemplateColor,
     templateSaving: templateState.templateSaving,
+    // The template editor own draft (T-0104, D72). The modal used to bind
+    // the composer new* fields, so opening it destroyed a half-written
+    // mission and saving it wrote whatever the composer was holding.
+    templateInstruction: templateState.templateInstruction,
+    setTemplateInstruction: templateState.setTemplateInstruction,
+    templateContext: templateState.templateContext,
+    setTemplateContext: templateState.setTemplateContext,
+    templateGoals: templateState.templateGoals,
+    setTemplateGoals: templateState.setTemplateGoals,
+    templateProfile: templateState.templateProfile,
+    setTemplateProfile: templateState.setTemplateProfile,
+    templateModel: templateState.templateModel,
+    templateProvider: templateState.templateProvider,
+    setTemplateModelAndProvider: templateState.setTemplateModelAndProvider,
+    templateMissionTime: templateState.templateMissionTime,
+    setTemplateMissionTime: templateState.setTemplateMissionTime,
+    templateTimeout: templateState.templateTimeout,
+    setTemplateTimeout: templateState.setTemplateTimeout,
+    templateLocalDirs: templateState.templateLocalDirs,
+    setTemplateLocalDirs: templateState.setTemplateLocalDirs,
+    templateLocalDirDraft: templateState.templateLocalDirDraft,
+    setTemplateLocalDirDraft: templateState.setTemplateLocalDirDraft,
+    templateReferences: templateState.templateReferences,
+    setTemplateReferences: templateState.setTemplateReferences,
+    templateReferenceInput: templateState.templateReferenceInput,
+    setTemplateReferenceInput: templateState.setTemplateReferenceInput,
+    templateSkills: templateState.templateSkills,
+    setTemplateSkills: templateState.setTemplateSkills,
+    templateCategoryId: templateState.templateCategoryId,
+    setTemplateCategoryId: templateState.setTemplateCategoryId,
     handleTemplateSave: templateActions.handleTemplateSave,
     newInstruction: composer.newInstruction,
     setNewInstruction: composer.setNewInstruction,

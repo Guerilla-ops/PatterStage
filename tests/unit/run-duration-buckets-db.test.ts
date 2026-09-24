@@ -4,29 +4,17 @@
 // ISO-8601 (Z-suffixed) timestamps that now() writes. A prior version appended
 // a second 'Z' before Date.parse, yielding NaN → an all-zero histogram.
 
-import { execBaselineSchema } from "../helpers/baseline-db";
+import { openBaselineDb } from "../helpers/baseline-db";
 
 let testDb: import("better-sqlite3").Database | null = null;
 
-jest.mock("@/lib/db", () => {
-  const actualCrypto = jest.requireActual("crypto") as typeof import("crypto");
-  return {
-    getDb: () => testDb!,
-    inTransaction: <T,>(fn: () => T) => testDb!.transaction(fn)(),
-    uuid: () => actualCrypto.randomUUID(),
-    now: () => new Date().toISOString(),
-    ensureDb: () => undefined,
-  };
-});
+jest.mock("@/lib/db", () => require("../helpers/baseline-db").dbSingletonMock(() => testDb));
 
 import { getRunDurationBuckets } from "@/lib/analytics/run-aggregates";
 
 describe("getRunDurationBuckets (DB, ISO-with-Z timestamps)", () => {
   beforeEach(() => {
-    const Database = require("better-sqlite3/lib/index.js") as typeof import("better-sqlite3");
-    testDb = new (Database as unknown as new (path: string) => import("better-sqlite3").Database)(":memory:");
-    testDb.pragma("foreign_keys = ON");
-    execBaselineSchema(testDb); // includes the runs table
+    testDb = openBaselineDb(); // includes the runs table
   });
   afterEach(() => {
     testDb?.close();

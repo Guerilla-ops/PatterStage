@@ -2,6 +2,9 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
 import { Sparkles, CheckCircle2 } from "lucide-react";
+
+import Card from "@/components/ui/Card";
+import { statusToneClasses } from "@/lib/ui/theme";
 import { LOADING_MESSAGES } from "@/modules/rec-room/lib/prompts";
 
 interface GenerateOverlayProps {
@@ -74,31 +77,35 @@ export default function GenerateOverlay({ title, visible, done, onComplete }: Ge
   if (!visible) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-dark-950/90 backdrop-blur-sm">
-      <div className="rounded-2xl border border-neon-purple/20 bg-dark-900/80 p-10 text-center max-w-md w-full mx-4">
+    // Not a dialog: there is nothing to focus and nothing to close. It is a
+    // live status the screen reader should announce as it changes, and the
+    // Stop control that B14 adds will make it one (T-0096, D116).
+    // design-lint-disable-next-line overlay-uses-dialog-a11y -- a progress status with no controls, announced via role=status rather than trapped as a dialog
+    <div className="fixed inset-0 z-overlay flex items-center justify-center bg-ps-surface-ground/90 backdrop-blur-sm" role="status" aria-live="polite" aria-busy={phase === "generating"}>
+      <Card padding="lg" className="mx-4 w-full max-w-md text-center">
         {phase === "generating" ? (
           <>
             <Sparkles className="w-12 h-12 text-neon-purple animate-pulse mx-auto mb-6" />
-            <h2 className="text-xl font-serif text-white mb-1">{title || "Your Story"}</h2>
-            <p className="text-sm text-ps-text-muted mb-6 h-5 transition-opacity">{msg}</p>
+            <h2 className="text-title font-serif text-ps-text-primary mb-1">{title || "Your Story"}</h2>
+            <p className="text-body text-ps-text-muted mb-6 h-5 transition-opacity">{msg}</p>
           </>
         ) : (
           <>
             <CheckCircle2 className="w-12 h-12 text-neon-green mx-auto mb-6" />
-            <h2 className="text-xl font-serif text-white mb-1">{title || "Your Story"}</h2>
-            <p className="text-sm text-neon-green mb-6">Your story is ready!</p>
+            <h2 className="text-title font-serif text-ps-text-primary mb-1">{title || "Your Story"}</h2>
+            <p className="text-body text-neon-green mb-6">Your story is ready!</p>
           </>
         )}
 
         {/* Progress bar */}
-        <div className="w-full h-2.5 rounded-full bg-white/5 mb-6 overflow-hidden">
+        <div className="w-full h-2.5 rounded-full bg-ps-surface-raised mb-6 overflow-hidden">
           <div className={`h-full rounded-full transition-all duration-500 ${
-            phase === "complete" ? "bg-gradient-to-r from-semantic-success to-emerald-400" : "bg-gradient-to-r from-neon-purple to-neon-pink"
+            phase === "complete" ? statusToneClasses.ok.dot : "bg-gradient-to-r from-neon-purple to-neon-pink"
           }`} style={{ width: `${progress}%` }} />
         </div>
 
-        <p className="text-xs font-mono text-ps-text-faint">{Math.round(progress)}%</p>
-      </div>
+        <p className="text-micro font-mono text-ps-text-faint">{Math.round(progress)}%</p>
+      </Card>
     </div>
   );
 }

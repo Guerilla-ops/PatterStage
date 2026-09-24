@@ -20,7 +20,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 
 const mockSafeApiCall = jest.fn();
-jest.mock("@/lib/api-fetch", () => ({
+jest.mock("@/lib/api/api-fetch", () => ({
   safeApiCall: (...a: unknown[]) => mockSafeApiCall(...a),
 }));
 
@@ -36,7 +36,7 @@ function wrapper({ children }: { children: ReactNode }) {
 const run = () =>
   renderHook(
     () =>
-      useApiResource<{ availableLogs: { name: string }[] }>(["k"], "/api/logs", {
+      useApiResource<{ availableLogs: { name: string }[] }>("/api/logs", {
         select: (p) => p as { availableLogs: { name: string }[] } | undefined,
       }),
     { wrapper },

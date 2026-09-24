@@ -14,8 +14,12 @@ import { test, expect } from "@playwright/test";
 const uniq = (p: string) => `${p}-${Date.now()}-${Math.floor(Math.random() * 1e4)}`;
 
 async function openComposer(page: import("@playwright/test").Page) {
-  await page.goto("/orchestration/missions");
-  await expect(page.getByRole("heading", { name: "Missions", exact: true })).toBeVisible();
+  await page.goto("/work/missions");
+  // See seed-catalog.spec.ts: the heading is client-rendered, so this waits for
+  // hydration rather than racing it.
+  await expect(page.getByRole("heading", { name: "Missions", exact: true })).toBeVisible({
+    timeout: 30_000,
+  });
   await page.getByRole("button", { name: /New Mission/i }).click();
   await expect(page.getByPlaceholder("e.g., Research quantum computing trends")).toBeVisible({
     timeout: 15_000,
@@ -87,7 +91,9 @@ test.describe("Missions page flows", () => {
 
   test("create a category via Manage categories", async ({ page }) => {
     const cat = uniq("e2e-cat");
-    await page.goto("/orchestration/missions");
+    await page.goto("/work/missions");
+    // Inside the templates disclosure since U19 (T-0133); open it first.
+    await page.getByRole("button", { name: /Quick load template/ }).click();
     await page.getByRole("button", { name: /Manage categories/i }).click();
     await expect(page.getByRole("heading", { name: /Manage categories/i })).toBeVisible();
     await page.getByPlaceholder("Category name").fill(cat);

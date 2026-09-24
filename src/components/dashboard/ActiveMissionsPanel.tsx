@@ -43,12 +43,12 @@ export default function ActiveMissionsPanel({
         accent="cyan"
         count={`(${missions.length})`}
         rightSlot={
-          <Link href="/orchestration/missions" className="text-xs font-mono text-neon-cyan hover:underline flex items-center gap-1">
+          <Link href="/work/missions" className="text-micro font-mono text-neon-cyan hover:underline flex items-center gap-1">
             all missions <ChevronRight className="w-3 h-3" />
           </Link>
         }
       />
-      <div className="divide-y divide-white/5">
+      <div className="divide-y divide-ps-edge-hairline">
         {missions.map((m) => (
           // Ledger row (WG-WEB-003): a parallel-fact list, so the row is the
           // container the pointer answers, not the panel around it. The row,
@@ -60,31 +60,31 @@ export default function ActiveMissionsPanel({
                 status={m.status === "dispatched" ? "online" : "warning"}
                 pulse={m.status === "dispatched"}
               />
-              <Link href="/orchestration/missions" className="text-xs text-ps-text-primary truncate hover:text-neon-cyan transition-colors">{m.name}</Link>
-              <span className="text-xs font-mono text-ps-text-muted capitalize">{m.dispatchMode}</span>
+              <Link href="/work/missions" className="text-body text-ps-text-primary truncate hover:text-neon-cyan transition-colors">{m.name}</Link>
+              <span className="text-micro font-mono text-ps-text-muted capitalize">{m.dispatchMode}</span>
               {m.latestSession ? (
                 <Link
-                  href={`/sessions/${m.latestSession.id}`}
-                  className="text-xs font-mono text-ps-text-faint hover:text-neon-cyan transition-colors"
+                  href={`/results/sessions/${m.latestSession.id}`}
+                  className="text-micro font-mono text-ps-text-faint hover:text-neon-cyan transition-colors"
                   title="View session"
                 >
                   {m.latestSession.id.slice(-20)}
                 </Link>
               ) : m.status === "dispatched" ? (
-                <span className="text-xs font-mono text-ps-text-faint italic">
+                <span className="text-micro font-mono text-ps-text-faint italic">
                   Session loading...
                 </span>
               ) : null}
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
               <MissionStatusBadge status={m.status} />
-              <span className="text-xs font-mono text-ps-text-faint">{timeAgo(m.createdAt)}</span>
+              <span className="text-micro font-mono text-ps-text-faint">{timeAgo(m.createdAt)}</span>
               <button
                 onClick={(e) => { e.preventDefault(); e.stopPropagation(); onCancel(m.id, m.name); }}
-                className={`text-xs font-mono transition-colors px-1.5 py-0.5 rounded ${
+                className={`text-micro font-mono transition-colors px-1.5 py-0.5 rounded-ps-sm ${
                   isArmedFor(m.id)
-                    ? "bg-red-500/20 text-red-400"
-                    : "text-ps-text-faint hover:text-red-400 hover:bg-red-500/10"
+                    ? "bg-semantic-danger/20 text-semantic-danger"
+                    : "text-ps-text-faint hover:text-semantic-danger hover:bg-semantic-danger/10"
                 }`}
                 title="Cancel mission"
               >

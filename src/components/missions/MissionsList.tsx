@@ -10,17 +10,26 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { StatusDot } from "@/components/ui/Card";
+import Card, { StatusDot } from "@/components/ui/Card";
+import IconButton from "@/components/ui/IconButton";
+import LoadErrorBanner from "@/components/ui/LoadErrorBanner";
+import { Input } from "@/components/ui/field";
 import { Panel } from "@/components/dashboard/Panel";
 import { LedgerRowButton } from "@/components/dashboard/LedgerRow";
 import CategoryAccordion from "@/components/ui/CategoryAccordion";
+import SegmentedControl from "@/components/ui/SegmentedControl";
 import TemplatePill from "@/components/ui/TemplatePill";
+import CollapsibleSection from "@/components/ui/CollapsibleSection";
+import { EmptyState } from "@/components/ui/EmptyState";
+import Button from "@/components/ui/Button";
+import { useState } from "react";
+import { statusToneClasses } from "@/lib/ui/theme";
 import {
   CATEGORY_COLOR_CLASSES,
   resolveCategoryDisplay,
   buildCategoryMap,
 } from "@/lib/missions/mission-categories";
-import { titleCase } from "@/lib/utils";
+
 import type { MissionsPageViewModel } from "@/hooks/useMissionsPage";
 import type { MissionRow } from "@/hooks/missions-page-types";
 import {
@@ -28,12 +37,19 @@ import {
   RUN_TONE_TEXT,
   STATUS_CONFIG,
 } from "./mission-page-constants";
-import { missionBoardColumn } from "@/lib/missions/mission-board";
+import {
+  MISSION_BOARD_COLUMNS,
+  countMissionsByColumn,
+  missionBoardColumn,
+} from "@/lib/missions/mission-board";
+import { MISSION_COLUMN_LABELS } from "@/lib/ui/status-labels";
 import { describeMissionRunState } from "@/lib/missions/mission-run-state";
 import MissionEditorPanel from "./MissionEditorPanel";
+import ConceptHint from "@/components/help/ConceptHint";
 
-const STATUS_FILTERS = ["all", "draft", "queued", "dispatched", "successful", "failed"] as const;
-const BOARD_COLUMNS = ["draft", "queued", "dispatched", "successful", "failed"] as const;
+// The board's columns are the board module's, and so are its counts: a second
+// list here is how the strip beside it ended up in a second vocabulary
+// (T-0104, C126).
 
 export interface MissionsListProps {
   vm: MissionsPageViewModel;
@@ -42,6 +58,8 @@ export interface MissionsListProps {
 export default function MissionsList({ vm }: MissionsListProps) {
   const {
     missions,
+    templates,
+    openCreate,
     showCreate,
     filter,
     setFilter,
@@ -72,6 +90,8 @@ export default function MissionsList({ vm }: MissionsListProps) {
     handleCancel,
     handleDuplicateMission,
     cancellingMissionId,
+    missionsLoadError,
+    fetchData,
   } = vm;
 
   const categoryMap = buildCategoryMap(categories);
@@ -80,35 +100,46 @@ export default function MissionsList({ vm }: MissionsListProps) {
   // which is what advances these numbers.
   /* eslint-disable-next-line react-hooks/purity -- live durations read the wall clock; the 15s poll re-renders the board */
   const renderedAt = Date.now();
+  // One pass for the badges, and the same function the strip above reads.
+  const columnCounts = countMissionsByColumn(filtered);
+  // The templates are a collapsed disclosure: on the busiest screen the board
+  // started 500px below the fold, under a heading, a blurb, a segmented control
+  // and eight accordions (the review of 2026-09-08). Closed until asked; the
+  // empty state's "Load a template" asks (T-0133).
+  const [templatesOpen, setTemplatesOpen] = useState(false);
+  const templateCount = templates?.length ?? 0;
 
   return (
-    <div className="w-full max-w-none px-6 py-6">
-      {/* The status summary (Total / Active / Done / Failed) is rendered once by
-          <MissionInsights> above this list — no duplicate tile row here. */}
+    <div>
+      {/* The status summary is rendered once by <MissionInsights> above this
+          list, off the same countMissionsByColumn call this board uses. */}
       {!showCreate && (
         <div className="mb-6" data-testid="missions-quick-templates">
+          <CollapsibleSection
+            title="Quick load template"
+            badge={`${templateCount} template${templateCount === 1 ? "" : "s"}`}
+            badgeColor="cyan"
+            expanded={templatesOpen}
+            onExpandedChange={setTemplatesOpen}
+          >
           <div className="flex flex-wrap justify-between items-start gap-4 mb-3">
-            <div>
-              <h2 className="text-sm font-mono text-ps-text-muted uppercase tracking-widest flex items-center gap-2">
-                <Zap className="w-3 h-3 text-neon-cyan" />
-                Quick load template
-              </h2>
-              <p className="text-xs text-ps-text-muted mt-1 font-mono">
-                Prefill the mission form — review and dispatch when ready
-              </p>
-            </div>
+            <p className="text-body text-ps-text-muted">
+              Prefill the <ConceptHint id="mission">mission</ConceptHint> form; review and dispatch
+              when ready.
+            </p>
             <div className="flex flex-wrap items-center gap-3 shrink-0">
+              {/* 16px of text was the whole target on both of these (T-0128). */}
               <button
                 type="button"
                 onClick={openCategoryManager}
-                className="text-xs font-mono text-ps-text-muted hover:text-neon-cyan"
+                className="inline-flex min-h-6.5 items-center text-micro font-mono text-ps-text-muted hover:text-neon-cyan"
               >
                 Manage categories
               </button>
               <button
                 type="button"
                 onClick={openTemplateManager}
-                className="text-xs font-mono text-ps-text-muted hover:text-neon-cyan flex items-center gap-1 transition-colors"
+                className="text-micro font-mono text-ps-text-muted hover:text-neon-cyan flex min-h-6.5 items-center gap-1 transition-colors"
               >
                 <Layers className="w-3 h-3" />
                 Edit Templates
@@ -116,45 +147,30 @@ export default function MissionsList({ vm }: MissionsListProps) {
             </div>
           </div>
           {templateCategoryPills.length <= 1 && (
-            <p className="text-xs text-ps-text-faint font-mono mb-4">
+            <p className="text-micro text-ps-text-faint font-mono mb-4">
               Category filters appear when you have templates in more than one
               category.
             </p>
           )}
           {templateCategoryPills.length > 1 && (
             <>
-              <p className="text-xs font-mono text-ps-text-faint uppercase tracking-widest mb-2">
+              <p className="text-micro font-mono text-ps-text-faint uppercase tracking-widest mb-2">
                 Template categories
               </p>
-              <div className="flex flex-wrap gap-2 mb-4">
-                <button
-                  type="button"
-                  onClick={() => setCategoryFilter("all")}
-                  className={`px-3 py-1 rounded-full text-xs font-mono transition-colors ${
-                    categoryFilter === "all"
-                      ? FALLBACK_CATEGORY_ACTIVE
-                                            : "text-ps-text-muted border border-white/10 hover:text-ps-text-secondary hover:border-white/20"
-                  }`}
-                >
-                  All
-                </button>
-                {templateCategoryPills.map((pill) => {
-                  const active = categoryFilter === pill.id;
-                  return (
-                    <button
-                      type="button"
-                      key={pill.id}
-                      onClick={() => setCategoryFilter(pill.id)}
-                      className={`px-3 py-1 rounded-full text-xs font-mono transition-colors ${
-                        active
-                          ? (CATEGORY_COLOR_CLASSES[pill.color] ?? FALLBACK_CATEGORY_ACTIVE)
-                          : "text-ps-text-muted border border-white/10 hover:text-ps-text-secondary hover:border-white/20"
-                      }`}
-                    >
-                      {pill.name} ({pill.count})
-                    </button>
-                  );
-                })}
+              <div className="mb-4">
+                <SegmentedControl
+                  label="Template categories"
+                  options={[
+                    { value: "all", label: "All" },
+                    ...templateCategoryPills.map((pill) => ({
+                      value: pill.id,
+                      label: pill.name,
+                      count: pill.count,
+                    })),
+                  ]}
+                  value={categoryFilter}
+                  onChange={setCategoryFilter}
+                />
               </div>
             </>
           )}
@@ -184,95 +200,93 @@ export default function MissionsList({ vm }: MissionsListProps) {
               </CategoryAccordion>
             ))}
           </div>
+          </CollapsibleSection>
         </div>
       )}
 
       <div className="flex flex-col gap-3 mb-4">
         {missionCategoryPills.length > 0 && (
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => setMissionCategoryFilter("all")}
-              className={`px-3 py-1 rounded-full text-xs font-mono transition-colors ${
-                missionCategoryFilter === "all"
-                  ? FALLBACK_CATEGORY_ACTIVE
-                                        : "text-ps-text-muted border border-white/10 hover:text-ps-text-secondary hover:border-white/20"
-              }`}
-            >
-              All missions
-            </button>
-            {missionCategoryPills.map((pill) => {
-              const active = missionCategoryFilter === pill.id;
-              return (
-                <button
-                  type="button"
-                  key={pill.id}
-                  onClick={() => setMissionCategoryFilter(pill.id)}
-                  className={`px-3 py-1 rounded-full text-xs font-mono transition-colors ${
-                    active
-                      ? (CATEGORY_COLOR_CLASSES[pill.color] ?? FALLBACK_CATEGORY_ACTIVE)
-                      : "text-ps-text-muted border border-white/10 hover:text-ps-text-secondary hover:border-white/20"
-                  }`}
-                >
-                  {pill.name} ({pill.count})
-                </button>
-              );
-            })}
-          </div>
+          <SegmentedControl
+            label="Mission categories"
+            options={[
+              { value: "all", label: "All missions" },
+              ...missionCategoryPills.map((pill) => ({
+                value: pill.id,
+                label: pill.name,
+                count: pill.count,
+              })),
+            ]}
+            value={missionCategoryFilter}
+            onChange={setMissionCategoryFilter}
+          />
         )}
         <div className="flex flex-wrap items-center gap-3">
-          <div className="flex items-center gap-1 bg-dark-900/50 rounded-lg border border-white/10 p-1">
-            {STATUS_FILTERS.map(
-              (f) => (
-                <button
-                  type="button"
-                  key={f}
-                  onClick={() => setFilter(f)}
-                  className={`px-2.5 py-1 rounded-md text-xs font-mono capitalize transition-colors ${
-                    filter === f
-                      ? "bg-neon-cyan/20 text-neon-cyan border border-neon-cyan/30"
-                      : "text-ps-text-muted hover:text-ps-text-muted border border-transparent"
-                  }`}
-                >
-                  {f}
-                </button>
-              ),
-            )}
-          </div>
+          <SegmentedControl
+            label="Status"
+            options={[
+              { value: "all", label: "All", count: filtered.length },
+              ...MISSION_BOARD_COLUMNS.map((status) => ({
+                value: status,
+                label: MISSION_COLUMN_LABELS[status],
+                count: columnCounts[status],
+              })),
+            ]}
+            value={filter}
+            onChange={setFilter}
+          />
           <div className="relative flex-1 min-w-[200px] max-w-sm">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/20" />
-            <input
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-ps-viz-glyph-idle" />
+            <Input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search missions..." aria-label="Search missions"
-              className="w-full bg-dark-900/50 border border-white/10 rounded-lg pl-9 pr-8 py-1.5 text-xs text-white placeholder-white/20 outline-none focus:border-neon-cyan/50 font-mono"
+              placeholder="Search missions..."
+              aria-label="Mission search"
+              className="pl-9 pr-8 font-mono"
             />
             {search && (
-              <button
-                type="button"
-                aria-label="Clear the mission search"
+              <IconButton
+                icon={X}
+                label="Clear the mission search"
+                size="sm"
                 onClick={() => setSearch("")}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 rounded text-ps-text-muted hover:text-ps-text-secondary transition-colors"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
+                className="absolute right-1.5 top-1/2 -translate-y-1/2"
+              />
             )}
           </div>
         </div>
       </div>
 
-      {filtered.length === 0 ? (
-        <div className="text-center py-12">
-          <Rocket className="w-10 h-10 text-white/10 mx-auto mb-3" />
-          <div className="text-sm text-ps-text-muted">
-            {missions.length === 0
-              ? "No missions yet - create one to get started"
-              : "No missions match your filter"}
-          </div>
-        </div>
+      {/* The read contract (T-0096, D67): a failed read is this banner with a
+          Retry, never the first-run empty state under it. */}
+      {missionsLoadError && (
+        <LoadErrorBanner error={missionsLoadError} onRetry={() => void fetchData()} />
+      )}
+      {missionsLoadError ? null : filtered.length === 0 ? (
+        // The first action one click from the top: an empty board used to be
+        // a sentence under 500px of templates (T-0133).
+        <EmptyState
+          icon={Rocket}
+          title={missions.length === 0 ? "No missions yet" : "No missions match your filter"}
+          description={missions.length === 0 ? "Create one, or load a template to prefill the form." : undefined}
+          action={
+            missions.length === 0 ? (
+              <div className="flex flex-wrap justify-center gap-2">
+                <Button variant="primary" color="cyan" size="sm" icon={Rocket} onClick={openCreate}>
+                  New Mission
+                </Button>
+                <Button variant="secondary" color="cyan" size="sm" icon={Zap} onClick={() => setTemplatesOpen(true)}>
+                  Load a template
+                </Button>
+              </div>
+            ) : undefined
+          }
+        />
       ) : (
-        <div className="flex flex-col lg:flex-row gap-4 overflow-x-auto pb-2">
-          {BOARD_COLUMNS.map(
+        <div
+          data-testid="missions-board"
+          className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3"
+        >
+          {MISSION_BOARD_COLUMNS.map(
             (status) => {
               const columnMissions = filtered.filter(
                 (m) => missionBoardColumn(m) === status,
@@ -303,21 +317,15 @@ export default function MissionsList({ vm }: MissionsListProps) {
               return (
                 <div
                   key={status}
-                  className="flex-1 min-w-[240px] flex flex-col"
+                  className="flex min-w-0 flex-col"
                 >
                   <div className="flex items-center justify-between mb-3 px-1">
                     <div className="flex items-center gap-2">
                       <div
-                        className={`w-2 h-2 rounded-full ${sc?.columnDot || "bg-white/20"}`}
+                        className={`w-2 h-2 rounded-full ${sc?.columnDot || statusToneClasses.idle.dot}`}
                       />
-                      <span className="text-xs font-mono text-ps-text-muted uppercase tracking-wider">
-                        {status === "successful"
-                          ? "Completed"
-                          : status === "failed"
-                            ? "Failed"
-                            : status === "draft"
-                              ? "Drafts"
-                              : titleCase(status)}
+                      <span className="text-micro font-mono text-ps-text-muted uppercase tracking-wider">
+                        {MISSION_COLUMN_LABELS[status]}
                       </span>
                     </div>
                     <div className="flex items-center gap-2">
@@ -326,23 +334,23 @@ export default function MissionsList({ vm }: MissionsListProps) {
                           <button
                             type="button"
                             onClick={toggleCollapsedColumn}
-                            className="text-xs font-mono text-ps-text-faint hover:text-neon-cyan transition-colors"
+                            className="text-micro font-mono text-ps-text-faint hover:text-neon-cyan transition-colors"
                           >
                             {collapsedColumns[status] ? "Show all" : "Collapse"}
                           </button>
                         )}
                       <span
-                        className={`text-xs font-mono px-2 py-0.5 rounded-full ${sc?.bg} ${sc?.text}`}
+                        className={`text-micro font-mono px-2 py-0.5 rounded-full ${sc?.bg} ${sc?.text}`}
                       >
-                        {columnMissions.length}
+                        {columnCounts[status]}
                       </span>
                     </div>
                   </div>
                   <div className="space-y-2 flex-1">
                     {columnMissions.length === 0 ? (
-                      <div className="rounded-xl border border-dashed border-white/5 bg-dark-900/20 p-4 text-center text-xs font-mono text-ps-text-faint">
+                      <Card className="border-dashed text-center text-micro font-mono text-ps-text-faint">
                         No missions
-                      </div>
+                      </Card>
                     ) : (
                       <>
                         {/* One container per COLUMN, not per mission. A mission
@@ -351,12 +359,12 @@ export default function MissionsList({ vm }: MissionsListProps) {
                             the column is the panel and the divider is what
                             separates two missions (T-0033). */}
                         <Panel>
-                          <div className="divide-y divide-white/5">
+                          <div className="divide-y divide-ps-edge-hairline">
                             {visibleMissions.map((mission: MissionRow) => {
                               const rowStatus =
                                 STATUS_CONFIG[mission.status] || {
                                   dot: "idle" as const,
-                                  bg: "bg-white/5",
+                                  bg: "bg-ps-surface-raised",
                                   text: "text-ps-text-muted",
                                 };
                               const isExpanded = expandedId === mission.id;
@@ -384,12 +392,12 @@ export default function MissionsList({ vm }: MissionsListProps) {
                                             status={rowStatus.dot}
                                             pulse={mission.status === "dispatched"}
                                           />
-                                          <span className="text-xs font-semibold text-white truncate">
+                                          <span className="text-body font-semibold text-ps-text-primary truncate">
                                             {mission.name}
                                           </span>
                                           {mission.categoryId && (
                                             <span
-                                              className={`text-xs font-mono px-1.5 py-0.5 rounded-full border ${
+                                              className={`text-micro font-mono px-1.5 py-0.5 rounded-full border ${
                                                 CATEGORY_COLOR_CLASSES[
                                                   catDisplay.color
                                                 ] ?? FALLBACK_CATEGORY_ACTIVE
@@ -399,7 +407,7 @@ export default function MissionsList({ vm }: MissionsListProps) {
                                             </span>
                                           )}
                                         </div>
-                                        <div className="flex items-center gap-2 mt-1.5 text-xs font-mono text-ps-text-faint flex-wrap">
+                                        <div className="flex items-center gap-2 mt-1.5 text-micro font-mono text-ps-text-faint flex-wrap">
                                           {/* "Running 2h 14m" and "Running 12s" are
                                               the same row with different numbers,
                                               which is the point: the card used to
@@ -418,16 +426,16 @@ export default function MissionsList({ vm }: MissionsListProps) {
                                             )}
                                           </span>
                                           {mission.status !== "queued" &&
-                                            mission.cronJob?.lastStatus && (
+                                            mission.scheduleStatus?.lastStatus && (
                                               <span
                                                 className={
-                                                  mission.cronJob.lastStatus ===
+                                                  mission.scheduleStatus.lastStatus ===
                                                   "ok"
-                                                    ? "text-neon-green"
-                                                    : "text-red-400"
+                                                    ? statusToneClasses.ok.text
+                                                    : statusToneClasses.fail.text
                                                 }
                                               >
-                                                {mission.cronJob.lastStatus}
+                                                {mission.scheduleStatus.lastStatus}
                                               </span>
                                             )}
                                         </div>
@@ -435,7 +443,7 @@ export default function MissionsList({ vm }: MissionsListProps) {
                                       <div className="flex items-center gap-1 flex-shrink-0">
                                         {STATUS_CONFIG[mission.status]?.icon ?? null}
                                         <ChevronRight
-                                          className={`w-3.5 h-3.5 text-white/20 transition-transform ${isExpanded ? "rotate-90" : ""}`}
+                                          className={`w-3.5 h-3.5 text-ps-viz-glyph-idle transition-transform ${isExpanded ? "rotate-90" : ""}`}
                                         />
                                       </div>
                                     </div>
@@ -467,7 +475,7 @@ export default function MissionsList({ vm }: MissionsListProps) {
                             <button
                               type="button"
                               onClick={toggleCollapsedColumn}
-                              className="w-full text-xs font-mono text-neon-cyan/80 hover:text-neon-cyan py-2 text-center border border-dashed border-white/5 rounded-lg transition-colors mt-2"
+                              className="w-full text-micro font-mono text-neon-cyan/80 hover:text-neon-cyan py-2 text-center border border-dashed border-ps-edge rounded-ps-md transition-colors mt-2"
                             >
                               Show all {columnMissions.length} missions →
                             </button>

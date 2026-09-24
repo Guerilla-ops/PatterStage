@@ -1,24 +1,24 @@
 // ═══════════════════════════════════════════════════════════════
 // useGatewayHealth — Unified gateway connectivity + agent model status
 // ═══════════════════════════════════════════════════════════════
-// Consolidates three separate useEffect patterns from the chat page:
-//   1. Gateway online check (polls every 30s)
-//   2. Agent default model set check
-//   3. Registry + gateway model list
+// Three reads: the gateway online check (polled every 30s), whether the
+// agent has a model at all, and the registry + gateway model lists. All of
+// them through useApiResource (T-0129), so the registry read is the same
+// cache entry the models page and the mission composer read.
 // ═══════════════════════════════════════════════════════════════
 
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { safeApiCallData } from "@/lib/api-fetch";
-import { useInterval } from "@/hooks/useInterval";
+import { useCallback, useMemo } from "react";
+
+import { useApiResource } from "@/hooks/useApiResource";
+import type { ModelReadiness } from "@/lib/models/model-readiness";
 import { CHAT_DEFAULT_MODEL } from "@/types/chat";
 
 const GATEWAY_HEALTH_URL = "/api/gateway/health";
 const GATEWAY_MODELS_URL = "/api/gateway/models";
 const MODELS_REGISTRY_URL = "/api/models";
 const MODELS_DEFAULTS_URL = "/api/models/defaults";
-const CONFIG_URL = "/api/config";
 
 export interface GatewayHealth {
   /** Whether the Hermes Gateway is reachable */
@@ -35,8 +35,13 @@ export interface GatewayHealth {
    * port (T-0080).
    */
   baseUrl: string | null;
-  /** Whether both registry and disk have an agent default model set */
-  agentDefaultModelSet: boolean | null;
+  /**
+   * The product's one answer to "do I have a model?", as resolved by
+   * GET /api/models/defaults. `null` during initial load and when the read
+   * fails: not knowing is not the same as knowing there is none, and a banner
+   * raised on a failed read would accuse a working install.
+   */
+  modelReadiness: ModelReadiness | null;
   /** Model IDs from the registry catalog */
   registryModelIds: string[];
   /** Human-readable name map for registry models */
@@ -54,8 +59,10 @@ interface RegistryModelRecord {
   name: string;
 }
 
-interface ConfigModelField {
-  model?: { default?: string } | string;
+interface HealthAnswer {
+  online: boolean;
+  authConfigured?: boolean;
+  baseUrl?: string;
 }
 
 /**
@@ -64,147 +71,106 @@ interface ConfigModelField {
  * Returns `online: null` during initial load, `false` if unreachable,
  * `true` if the gateway health endpoint responds 2xx.
  *
- * Returns `agentDefaultModelSet: null` during initial load, `false` if
- * either registry or disk config lacks an agent default, `true` if both are set.
+ * Returns `modelReadiness: null` until the models endpoint answers.
  */
 export function useGatewayHealth(): GatewayHealth & {
   refetchHealth: () => void;
   refetchModels: () => Promise<void>;
 } {
-  const [online, setOnline] = useState<boolean | null>(null);
-  const [authConfigured, setAuthConfigured] = useState<boolean | null>(null);
-  const [baseUrl, setBaseUrl] = useState<string | null>(null);
-  const [agentDefaultModelSet, setAgentDefaultModelSet] = useState<boolean | null>(null);
-  const [registryModelIds, setRegistryModelIds] = useState<string[]>([]);
-  const [modelLabels, setModelLabels] = useState<Record<string, string>>({});
-  const [gatewayModelIds, setGatewayModelIds] = useState<string[]>([CHAT_DEFAULT_MODEL]);
-  const [modelsError, setModelsError] = useState<string | null>(null);
-  const [modelsLoading, setModelsLoading] = useState(true);
-
   // ── Check gateway connectivity ───────────────────────────────
-  // The endpoint returns `{ data: { online: boolean } }`. `safeApiCallData`
-  // unwraps the inner `{ online }` so a truthy `online` is reported as
-  // online and any error (or `{ data: { online: false } }`) is reported
-  // as offline — byte-equivalent to the pre-refactor
-  // `result.ok ? result.data?.online === true : false` shape.
-  const checkOnline = useCallback(async () => {
-    const data = await safeApiCallData<{
-      online: boolean;
-      authConfigured?: boolean;
-      baseUrl?: string;
-    }>(GATEWAY_HEALTH_URL, { signal: AbortSignal.timeout(3000) });
-    setOnline(data?.online === true);
-    // Only meaningful when reachable; null when the probe failed entirely.
-    setAuthConfigured(data?.online === true ? data?.authConfigured !== false : null);
-    // Kept from the last answer when a probe fails to reach OUR OWN server:
-    // the gateway address did not change because the browser lost the tab's
-    // connection, and blanking it would drop the banner back to a guess.
-    if (typeof data?.baseUrl === "string" && data.baseUrl) setBaseUrl(data.baseUrl);
-  }, []);
+  // The endpoint returns `{ data: { online: boolean } }`, and any error
+  // reports as offline. Polled every 30s; react-query stops the poll while
+  // the tab is hidden and catches up on focus, as useInterval did before it:
+  // a background tab was probing the gateway 2,880 times a day to update a
+  // dot nobody was looking at, and the value the operator actually cares
+  // about is the one on screen when they return.
+  const health = useApiResource<HealthAnswer>(GATEWAY_HEALTH_URL, {
+    select: (p) => (p as HealthAnswer | null) ?? undefined,
+    errorMessage: "Gateway unreachable",
+    refetchInterval: 30_000,
+  });
+  // A probe that failed keeps the last answer's address: the gateway did not
+  // move because the browser lost the tab's connection, and blanking it would
+  // drop the banner back to a guess.
+  const online = health.error ? false : health.data ? health.data.online === true : null;
+  const authConfigured = online ? health.data?.authConfigured !== false : null;
+  const baseUrl = typeof health.data?.baseUrl === "string" && health.data.baseUrl ? health.data.baseUrl : null;
 
-  // ── Check agent default model setup ─────────────────────────
-  // Both endpoints return `{ data: <inner> }`. `safeApiCallData` unwraps
-  // the inner payload directly so the `defaults?.agent` and
-  // `config?.model` reads work the way the type suggests. The pre-
-  // refactor code read the envelope `result.data` and got `{ data: ... }`
-  // for both — `result.data.defaults` was `undefined` and the hook
-  // always reported `agentDefaultModelSet: false`. This is a "feature
-  // is not working" fix that the recurring mission explicitly permits
-  // — the migration to `safeApiCallData` makes the chat page correctly
-  // detect a configured agent default.
-  const checkAgentModel = useCallback(async () => {
-    const [defaults, config] = await Promise.all([
-      safeApiCallData<{ defaults?: { agent?: string } }>(MODELS_DEFAULTS_URL, {
-        signal: AbortSignal.timeout(5000),
-      }),
-      safeApiCallData<ConfigModelField>(CONFIG_URL, {
-        signal: AbortSignal.timeout(5000),
-      }),
-    ]);
-    const registryOk = Boolean(defaults?.defaults?.agent?.trim());
-    let diskOk = false;
-    if (config) {
-      const modelCfg = config.model;
-      if (typeof modelCfg === "string") {
-        diskOk = modelCfg.trim().length > 0;
-      } else if (modelCfg && typeof modelCfg === "object") {
-        diskOk = Boolean(String((modelCfg as Record<string, unknown>).default ?? "").trim());
-      }
-    }
-    setAgentDefaultModelSet(registryOk && diskOk);
-  }, []);
+  // ── Does the agent have a model? ────────────────────────────
+  //
+  // ONE read, and no arithmetic on the answer. This used to fetch the models
+  // registry AND the agent's config file and report `registryOk && diskOk`,
+  // and the registry half is irrelevant to chat: an agent turn sends no model
+  // (the gateway reads its own config file) and a fast turn sends the chat
+  // dropdown's id. An install whose config file named a model but whose
+  // registry slot was empty was therefore told, in orange, that it could not
+  // chat, on a chat that worked. The rule now lives in one place on the server
+  // (src/lib/models/model-readiness.ts, applied by GET /api/models/defaults)
+  // so this screen and the two others read the same answer.
+  const readiness = useApiResource<ModelReadiness | null>(MODELS_DEFAULTS_URL, {
+    select: (p) => (p as { modelReadiness?: ModelReadiness } | null)?.modelReadiness ?? null,
+    errorMessage: "Failed to read the agent's model",
+  });
+  const modelReadiness = readiness.data ?? null;
 
   // ── Fetch model lists ───────────────────────────────────────
-  // Both endpoints return `{ data: <inner> }`. As with `checkAgentModel`,
-  // the pre-refactor code read the envelope and the model list was
-  // always empty. After the migration, `registry` and `gateway` are the
-  // inner payloads (`null` on error, payload on success).
-  const fetchModels = useCallback(async () => {
-    setModelsError(null);
-    setModelsLoading(true);
-    const labels: Record<string, string> = {};
-    let registryIds: string[] = [];
-    let gateway: string[] = [CHAT_DEFAULT_MODEL];
+  // Both endpoints return `{ data: <inner> }` and the reader selects the
+  // inner list. Reading the envelope instead left the model list always empty.
+  const registry = useApiResource<RegistryModelRecord[]>(MODELS_REGISTRY_URL, {
+    select: (p) => {
+      const models = (p as { models?: RegistryModelRecord[] } | null)?.models;
+      return Array.isArray(models) ? models : [];
+    },
+    errorMessage: "Failed to load the model registry",
+  });
+  const gateway = useApiResource<string[]>(GATEWAY_MODELS_URL, {
+    select: (p) => (p as { models?: string[] } | null)?.models ?? [],
+    errorMessage: "Gateway models unavailable",
+  });
 
-    const [registry, gatewayRes] = await Promise.all([
-      safeApiCallData<{ models?: RegistryModelRecord[] }>(MODELS_REGISTRY_URL),
-      safeApiCallData<{ models?: string[] }>(GATEWAY_MODELS_URL, {
-        signal: AbortSignal.timeout(5000),
-      }),
-    ]);
-
-    if (registry && Array.isArray(registry.models)) {
-      const records = registry.models;
-      registryIds = records
+  const registryModelIds = useMemo(
+    () =>
+      (registry.data ?? [])
         .map((m) => m.modelId)
-        .filter((id): id is string => typeof id === "string" && id.length > 0);
-      for (const m of records) {
-        if (m.modelId) labels[m.modelId] = m.name;
-      }
+        .filter((id): id is string => typeof id === "string" && id.length > 0),
+    [registry.data],
+  );
+  const modelLabels = useMemo(() => {
+    const labels: Record<string, string> = {};
+    for (const m of registry.data ?? []) {
+      if (m.modelId) labels[m.modelId] = m.name;
     }
+    return labels;
+  }, [registry.data]);
+  const gatewayModelIds = useMemo(
+    () => (gateway.data && gateway.data.length > 0 ? gateway.data : [CHAT_DEFAULT_MODEL]),
+    [gateway.data],
+  );
+  const modelsError = gateway.error ? "Gateway models unavailable" : null;
+  const modelsLoading = registry.isFetching || gateway.isFetching;
 
-    if (gatewayRes) {
-      const ids: string[] = gatewayRes.models || [];
-      if (ids.length > 0) gateway = ids;
-    } else {
-      setModelsError("Gateway models unavailable");
-    }
+  const { refetch: refetchHealthQuery } = health;
+  const refetchHealth = useCallback(() => {
+    void refetchHealthQuery();
+  }, [refetchHealthQuery]);
 
-    setRegistryModelIds(registryIds);
-    setGatewayModelIds(gateway);
-    setModelLabels(labels);
-    setModelsLoading(false);
-  }, []);
-
-  // ── Initial load ────────────────────────────────────────────
-  useEffect(() => {
-    void checkOnline();
-    void checkAgentModel();
-    void fetchModels();
-  }, [checkOnline, checkAgentModel, fetchModels]);
-
-  // ── Poll gateway health every 30s ───────────────────────────
-  //
-  // Via `useInterval` rather than a raw `setInterval`, so the poll stops while
-  // the chat tab is hidden and re-checks once the moment it comes back. A
-  // background tab was probing the gateway 2,880 times a day to update a dot
-  // nobody was looking at, and the value the operator actually cares about is
-  // the one on screen when they return.
-  useInterval(() => {
-    void checkOnline();
-  }, { ms: 30_000 });
+  const { refetch: refetchRegistry } = registry;
+  const { refetch: refetchGateway } = gateway;
+  const refetchModels = useCallback(async () => {
+    await Promise.all([refetchRegistry(), refetchGateway()]);
+  }, [refetchRegistry, refetchGateway]);
 
   return {
     online,
     authConfigured,
     baseUrl,
-    agentDefaultModelSet,
+    modelReadiness,
     registryModelIds,
     modelLabels,
     gatewayModelIds,
     modelsError,
     modelsLoading,
-    refetchHealth: checkOnline,
-    refetchModels: fetchModels,
+    refetchHealth,
+    refetchModels,
   };
 }

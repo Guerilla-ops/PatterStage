@@ -15,18 +15,20 @@ import {
   buildMissionPrompt,
 } from "@/lib/missions/mission-repository";
 import { normalizeLocalDirsInput } from "@/lib/fs/local-dir-entry";
-import { logApiError } from "@/lib/api-logger";
-import { badRequest, serverError } from "@/lib/api-response";
-import { appendAuditLine } from "@/lib/audit-log";
+import { logApiError } from "@/lib/api/api-logger";
+import { badRequest, serverError } from "@/lib/api/api-response";
+import { appendAuditLine } from "@/lib/api/audit-log";
 import { resolveAgentSlug } from "@/lib/agents/roster";
-import { createSchedule } from "@/lib/schedules-repository";
+import { createSchedule } from "@/lib/schedule/schedules-repository";
 import { parseSchedule, scheduleDisplayFromParsed } from "@/lib/schedule/parse-schedule";
 import { computeNextRun, scheduleCanEverFire } from "@/lib/schedule/next-run";
+import { scheduleIntervalProblem } from "@/lib/schedule/interval-bounds";
 import { dispatchMissionNow } from "@/lib/missions/mission-dispatch";
 import { parseMissionBodyFields } from "@/lib/missions/mission-body";
+import { missionTimeoutError } from "@/lib/missions/mission-timeout";
 import { runMissionQueueTick } from "@/lib/missions/mission-queue-tick";
 import { missionResponse } from "@/lib/missions/mission-response";
-import { parseDispatchMode, DISPATCH_MODES, type DispatchMode } from "@/lib/dispatch-mode";
+import { parseDispatchMode, DISPATCH_MODES, type DispatchMode } from "@/lib/ui/dispatch-mode";
 
 import { parseCategoryIdOrError } from "./shared";
 
@@ -109,6 +111,28 @@ export async function handleDispatchMission(
     resolvedProfileId = resolveAgentSlug(profileKey);
   }
 
+  // Judged HERE, before createMission, for the reason the dispatchMode check
+  // above gives: a refusal after the row is written leaves a Draft nobody
+  // asked for. This file's own comment admitted the schedule 400 did exactly
+  // that (T-0088). The timeout joins it: an out-of-range value is a 400, not
+  // a silent drop to "no timeout".
+  const timeoutError = missionTimeoutError(body);
+  if (timeoutError) return badRequest(timeoutError);
+  if (parseDispatchMode(dispatchMode, scheduleVal).isCronMode) {
+    if (parseSchedule(scheduleVal!).kind === "invalid") {
+      return badRequest(`Unrecognized schedule: ${scheduleVal}`);
+    }
+    if (!scheduleCanEverFire(scheduleVal!)) {
+      return badRequest(
+        `Schedule "${scheduleVal}" can never fire: it names a date that does not ` +
+          `exist, or a field outside its range. Check the day-of-month against the month.`,
+      );
+    }
+    // The opposite failure, and the expensive one: `every 0m` fires constantly,
+    // and each firing here is a paid agent run.
+    const tooFrequent = scheduleIntervalProblem(scheduleVal!);
+    if (tooFrequent) return badRequest(tooFrequent);
+  }
   const mission = createMission({
     // Derived from the instruction when no name was given, so the board does
     // not fill with rows called "Untitled Mission" that nobody can tell apart.
@@ -146,27 +170,21 @@ export async function handleDispatchMission(
     // PatterStage owns the timer: a `schedules` row (mission_id FK) is the
     // source of truth and the scheduler tick (orchestration/scheduler)
     // dispatches each occurrence via the runtime. There is NO Hermes
-    // jobs.json bridge. The first run is kicked off immediately
-    // (best-effort) so the user sees activity without waiting for the next
-    // tick — the schedule is durable regardless of that run's outcome.
+    // jobs.json bridge. Shape and satisfiability were both judged above,
+    // before the row existed (T-0079 for the never-fires case, T-0088 for the
+    // position).
+    //
+    // Nothing runs here. This branch used to fire a best-effort first run the
+    // moment the schedule was written, which is a run the operator did not ask
+    // for: the composer offers Schedule and Run now as separate choices, and
+    // the cadence picker prints the times it WILL fire. On a paid provider
+    // that first run is the operator's money. A run now is still one click
+    // away, on the schedule's own Run button (T-0114).
     const parsedSchedule = parseSchedule(scheduleVal!);
-    if (parsedSchedule.kind === "invalid") {
-      return badRequest(`Unrecognized schedule: ${scheduleVal}`);
-    }
-    // Shape is not satisfiability. `0 0 30 2 *` is five well-formed fields
-    // naming a date that never comes: it stored enabled, computed a null
-    // next-run, and getDueSchedules filters `next_run_at IS NOT NULL` -- so
-    // the row sat enabled forever and dead forever (T-0079).
-    if (!scheduleCanEverFire(scheduleVal!)) {
-      return badRequest(
-        `Schedule "${scheduleVal}" can never fire: it names a date that does not ` +
-          `exist, or a field outside its range. Check the day-of-month against the month.`,
-      );
-    }
 
     try {
       const next = computeNextRun(scheduleVal!, new Date());
-      const schedule = createSchedule({
+      createSchedule({
         missionId: mission.id,
         name: mission.name,
         schedule: scheduleVal!,
@@ -175,16 +193,6 @@ export async function handleDispatchMission(
         profileName: profileName ?? mission.profileName ?? null,
         nextRunAt: next ? next.toISOString() : null,
       });
-
-      // Immediate first run — best-effort (the schedule fires on the next
-      // tick even if this run fails, e.g. the backend is momentarily down).
-      // Pass scheduleId so this first run is linked to its schedule (the
-      // run row's schedule_id), matching scheduler-fired runs.
-      try {
-        await dispatchMissionNow(mission.id, { profileName, modelId, provider, scheduleId: schedule.id });
-      } catch (err) {
-        logApiError("POST /api/missions", "schedule first-run", err);
-      }
 
       appendAuditLine({ action: "mission.schedule_dispatch", resource: mission.id, ok: true });
       return missionResponse(mission.id, 201);

@@ -27,7 +27,7 @@
 //     the only problem is a sync ERROR;
 //   * and `POST /api/agent/profiles/sync/push` answers 200 {success:false} for
 //     the same failure the toolsets route answers 500 for -- while putting the
-//     reason at `data.result.error`, where runSyncAction does not look, so the
+//     reason at `data.result.error`, where runWrite does not look, so the
 //     operator gets a generic "Push failed" and never sees the ENOENT at all.
 
 import { mkdtempSync, existsSync, rmSync, readFileSync, mkdirSync } from "fs";
@@ -81,7 +81,7 @@ const rootRow = {
 };
 
 const mockSetAgentRootSyncStatus = jest.fn();
-jest.mock("@/lib/agent-root-repository", () => ({
+jest.mock("@/lib/agents/agent-root-repository", () => ({
   getAgentRoot: () => rootRow,
   setAgentRootSyncStatus: (...a: unknown[]) => mockSetAgentRootSyncStatus(...a),
   updateAgentRoot: jest.fn(),
@@ -91,13 +91,7 @@ jest.mock("@/lib/agent-root-repository", () => ({
 // the model defaults on its way through, and mocking that away would have cut
 // out part of the very path this file exists to exercise.
 let testDb: import("better-sqlite3").Database | null = null;
-jest.mock("@/lib/db", () => ({
-  now: () => "2026-08-31T12:00:00Z",
-  getDb: () => testDb!,
-  ensureDb: () => undefined,
-  inTransaction: <T,>(fn: () => T) => testDb!.transaction(fn)(),
-  uuid: () => "test-uuid",
-}));
+jest.mock("@/lib/db", () => require("../helpers/baseline-db").dbSingletonMock(() => testDb, { uuid: () => "test-uuid", now: () => "2026-08-31T12:00:00Z" }));
 
 import { execBaselineSchema } from "../helpers/baseline-db";
 import { pushRootToHermes } from "@/modules/hermes/lib/profile-push";

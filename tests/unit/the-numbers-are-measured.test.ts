@@ -26,20 +26,14 @@
 import { join } from "path";
 
 import { execBaselineSchema } from "../helpers/baseline-db";
-import { applyAgentProgressionMigration } from "@/lib/db/apply-agent-progression-migration";
+import { applyAgentProgressionMigration } from "@/lib/db/sql-migrations";
 
 let testDb: import("better-sqlite3").Database | null = null;
 
-jest.mock("@/lib/db", () => ({
-  getDb: () => testDb!,
-  inTransaction: <T,>(fn: () => T) => testDb!.transaction(fn)(),
-  ensureDb: () => undefined,
-  uuid: () => `id-${Math.random().toString(36).slice(2)}`,
-  now: () => new Date().toISOString(),
-}));
+jest.mock("@/lib/db", () => require("../helpers/baseline-db").dbSingletonMock(() => testDb));
 
 const mockCountSkills = jest.fn();
-jest.mock("@/lib/skills-repository", () => ({
+jest.mock("@/lib/skills/skills-repository", () => ({
   countSkills: () => mockCountSkills(),
 }));
 
@@ -49,9 +43,9 @@ jest.mock("@/lib/sessions/session-repository", () => ({
 }));
 
 jest.mock("@/lib/sync", () => ({ ensureSyncLayer: jest.fn() }));
-jest.mock("@/lib/api-logger", () => ({
+jest.mock("@/lib/api/api-logger", () => ({
   logApiError: jest.fn(),
-  serverErrorFromCatch: jest.requireActual("@/lib/api-logger").serverErrorFromCatch,
+  serverErrorFromCatch: jest.requireActual("@/lib/api/api-logger").serverErrorFromCatch,
 }));
 
 const mockGetDashboardStats = jest.fn();

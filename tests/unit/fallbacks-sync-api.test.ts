@@ -1,48 +1,18 @@
 /** @jest-environment node */
 
 import type { NextRequest } from "next/server";
-jest.mock("next/server", () => ({
-  NextRequest: class NextRequest {
-    url: string;
-    method: string;
-    headers: Headers;
-    nextUrl: URL;
-    bodyUsed: boolean = false;
-    private _body: string;
-    constructor(url: string, init?: RequestInit) {
-      this.url = url;
-      this.method = init?.method ?? "GET";
-      this.headers = new Headers(init?.headers as HeadersInit);
-      this._body = typeof init?.body === "string" ? init.body : JSON.stringify(init?.body ?? {});
-      this.nextUrl = new URL(url);
-    }
-    async json() {
-      return JSON.parse(this._body);
-    }
-  },
-  NextResponse: class NextResponse {
-    status: number;
-    body: unknown;
-    constructor(status: number, body: unknown) {
-      this.status = status;
-      this.body = body;
-    }
-    async json() { return this.body; }
-    static json(data: unknown, init?: ResponseInit) {
-      return new NextResponse(init?.status ?? 200, data);
-    }
-  },
-}));
+// eslint-disable-next-line @typescript-eslint/no-require-imports -- jest.mock factories are hoisted above imports
+jest.mock("next/server", () => require("../helpers/mocks").nextServerMock());
 
-jest.mock("@/lib/api-logger", () => ({ logApiError: jest.fn() }));
-jest.mock("@/lib/audit-log", () => ({ appendAuditLine: jest.fn() }));
-jest.mock("@/lib/api-auth", () => ({ requireAuth: jest.fn(() => null) }));
-jest.mock("@/lib/parse-json-body", () => {
+jest.mock("@/lib/api/api-logger", () => ({ logApiError: jest.fn() }));
+jest.mock("@/lib/api/audit-log", () => ({ appendAuditLine: jest.fn() }));
+jest.mock("@/lib/api/api-auth", () => ({ requireAuth: jest.fn(() => null) }));
+jest.mock("@/lib/api/parse-json-body", () => {
   // Mock only parseJsonBody (legacy test pattern) — leave
   // parseAndValidateJsonBody unmocked so the real zod validation runs
   // against the test's body. The real helper composes parseJsonBody +
   // zod schema.safeParse, so this still exercises the schema path.
-  const actual = jest.requireActual("@/lib/parse-json-body");
+  const actual = jest.requireActual("@/lib/api/parse-json-body");
   return {
     parseJsonBody: jest.fn(async (req: { json: () => Promise<unknown> }) => req.json()),
     parseAndValidateJsonBody: actual.parseAndValidateJsonBody,
@@ -53,7 +23,7 @@ const mockGetFallbackConfig = jest.fn();
 const mockUpdateFallbackConfigBatch = jest.fn();
 const mockSyncEnabled = jest.fn();
 
-jest.mock("@/lib/fallbacks-repository", () => ({
+jest.mock("@/lib/models/fallbacks-repository", () => ({
   getFallbackConfig: (...args: unknown[]) => mockGetFallbackConfig(...args),
   updateFallbackConfigBatch: (...args: unknown[]) => mockUpdateFallbackConfigBatch(...args),
 }));

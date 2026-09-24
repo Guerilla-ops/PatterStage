@@ -33,7 +33,7 @@
 // holding stale output for a run that ended while it waited.
 
 import { join } from "path";
-import { execBaselineSchema } from "../helpers/baseline-db";
+import { openBaselineDb } from "../helpers/baseline-db";
 import { applyComposerMigration } from "@/lib/db/apply-composer-migration";
 import { applyComposerGroupLinkMigration } from "@/lib/db/apply-composer-group-link-migration";
 import { applyComposerRejectedMigration } from "@/lib/db/apply-composer-rejected-migration";
@@ -41,16 +41,7 @@ import { applyComposerNodeCancelledMigration } from "@/lib/db/apply-composer-nod
 
 let testDb: import("better-sqlite3").Database | null = null;
 
-jest.mock("@/lib/db", () => {
-  const actualCrypto = jest.requireActual("crypto") as typeof import("crypto");
-  return {
-    getDb: () => testDb!,
-    inTransaction: <T,>(fn: () => T) => testDb!.transaction(fn)(),
-    uuid: () => actualCrypto.randomUUID(),
-    now: () => new Date().toISOString(),
-    ensureDb: () => undefined,
-  };
-});
+jest.mock("@/lib/db", () => require("../helpers/baseline-db").dbSingletonMock(() => testDb));
 
 const mockStopRun = jest.fn(async () => undefined);
 jest.mock("@/lib/runtime", () => ({
@@ -61,8 +52,8 @@ jest.mock("@/lib/runtime", () => ({
   },
 }));
 jest.mock("@/lib/feature-flags", () => ({ isFeatureEnabled: () => true }));
-jest.mock("@/lib/audit-log", () => ({ appendAuditLine: (...a: unknown[]) => mockAudit(...a) }));
-jest.mock("@/lib/api-logger", () => ({
+jest.mock("@/lib/api/audit-log", () => ({ appendAuditLine: (...a: unknown[]) => mockAudit(...a) }));
+jest.mock("@/lib/api/api-logger", () => ({
   logApiError: (...a: unknown[]) => mockLogApiError(...a),
   serverErrorFromCatch: jest.fn(),
 }));
@@ -82,7 +73,7 @@ import {
   deleteWorkflow,
 } from "@/lib/composer/composer-repository";
 import { advanceComposerRun, finalizeComposerNodeRun } from "@/lib/composer/engine";
-import { createRun, getRun, listActiveRuns, attachBackendRun, updateRun } from "@/lib/runs-repository";
+import { createRun, getRun, listActiveRuns, attachBackendRun, updateRun } from "@/lib/runs/runs-repository";
 import { POST as cancelPOST } from "@/app/api/composer/runs/[id]/cancel/route";
 
 const migrationsDir = join(process.cwd(), "src", "lib", "db", "migrations");
@@ -99,15 +90,11 @@ const GATED = {
 };
 
 function freshDb(): import("better-sqlite3").Database {
-  const Database = require("better-sqlite3/lib/index.js") as typeof import("better-sqlite3");
-  const db = new (Database as unknown as new (p: string) => import("better-sqlite3").Database)(
-    ":memory:",
-  );
-  db.pragma("foreign_keys = ON");
-  execBaselineSchema(db);
-  applyComposerMigration(db, migrationsDir);
-  applyComposerGroupLinkMigration(db, migrationsDir);
-  applyComposerRejectedMigration(db, migrationsDir);
+  const db = openBaselineDb([
+    applyComposerMigration,
+    applyComposerGroupLinkMigration,
+    applyComposerRejectedMigration,
+  ]);
   return db;
 }
 
@@ -428,10 +415,12 @@ describe("migration 037 rebuilds the node table without losing anything", () => 
     expect(sql).not.toMatch(/CREATE TABLE composer_runs_new/);
   });
 
-  it("the head constant moves with it", () => {
-    expect(
-      require("fs").readFileSync(join(process.cwd(), "src", "lib", "db-schema.ts"), "utf-8"),
-    ).toMatch(/MIGRATION_HEAD_SCHEMA_VERSION = 37/);
+  it("the head constant moved with it, and has not moved back", () => {
+    // 037 raised the head to 37; later migrations raise it further (038 did in
+    // T-0097). What this holds is that the head never sits below this gate.
+    const src = require("fs").readFileSync(join(process.cwd(), "src", "lib", "db-schema.ts"), "utf-8") as string;
+    const m = /MIGRATION_HEAD_SCHEMA_VERSION = (\d+)/.exec(src);
+    expect(Number(m?.[1])).toBeGreaterThanOrEqual(37);
   });
 
   it("refuses to rebuild a drifted table rather than truncating it", () => {
@@ -495,14 +484,17 @@ describe("migration 037 rebuilds the node table without losing anything", () => 
 
 describe("the UI shows the cancel and its refusal", () => {
   const page = require("fs").readFileSync(
-    join(process.cwd(), "src", "app", "orchestration", "composer", "page.tsx"),
+    join(process.cwd(), "src", "app", "work", "composer", "page.tsx"),
     "utf-8",
   ) as string;
 
   it("the handler checks the result rather than discarding it", () => {
     const fn = page.slice(page.indexOf("async function cancelRun"));
-    expect(fn.slice(0, 900)).toMatch(/\.ok/);
-    expect(fn.slice(0, 900)).toMatch(/setGateError/);
+    // Since C6 (T-0143) the write goes through runWrite, which checks the
+    // envelope and says the refusal in the server's words as a toast; the
+    // handler names the message for the case the server says nothing.
+    expect(fn.slice(0, 900)).toMatch(/runWrite/);
+    expect(fn.slice(0, 900)).toMatch(/errorMessage/);
   });
 
   it("cancelled is filterable, so a cancelled run is findable", () => {

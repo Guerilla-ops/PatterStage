@@ -1,8 +1,7 @@
 // ═══════════════════════════════════════════════════════════════
-// ScriptEditorModal — write or edit a *.sh file
+// ScriptEditorModal — write or edit a script file
 //
-// Extracted verbatim from app/orchestration/scripts/page.tsx. The
-// editor's state and its save/delete calls stay on the page; this
+// The editor's state and its save/delete calls stay on the page; this
 // component renders the modal and calls back. Presentation only.
 // ═══════════════════════════════════════════════════════════════
 
@@ -10,7 +9,9 @@
 
 import { FileCode, Save, Trash2 } from "lucide-react";
 import Button from "@/components/ui/Button";
+import ConfirmButton from "@/components/ui/ConfirmButton";
 import Modal from "@/components/ui/Modal";
+import { Input, Textarea } from "@/components/ui/field";
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 
 export interface ScriptEditorModalProps {
@@ -25,6 +26,8 @@ export interface ScriptEditorModalProps {
   onClose: () => void;
   onSave: () => void;
   onDelete: () => void;
+  /** True when this script has a schedule that the delete would take with it. */
+  scheduled?: boolean;
 }
 
 export default function ScriptEditorModal({
@@ -39,6 +42,7 @@ export default function ScriptEditorModal({
   onClose,
   onSave,
   onDelete,
+  scheduled = false,
 }: ScriptEditorModalProps) {
   return (
     <Modal
@@ -51,9 +55,26 @@ export default function ScriptEditorModal({
       footer={
         <>
           {!isNew && (
-            <Button variant="ghost" size="sm" icon={Trash2} onClick={onDelete} disabled={saving}>
+            // Two clicks in the modal's own footer, not a native confirm over it
+            // (T-0096, D51). The warning beside it is the other half: a
+            // scheduled script loses its schedule with the file, and that was
+            // said only in this comment (T-0107).
+            <ConfirmButton
+              variant="ghost"
+              size="sm"
+              icon={Trash2}
+              onConfirm={onDelete}
+              disabled={saving}
+              confirmLabel="Delete for good?"
+              armedClassName="text-semantic-danger bg-semantic-danger/10 ring-1 ring-semantic-danger/30"
+            >
               Delete
-            </Button>
+            </ConfirmButton>
+          )}
+          {!isNew && scheduled && (
+            <span className="ml-2 font-mono text-micro text-semantic-warning">
+              Deleting the file also removes its schedule.
+            </span>
           )}
           <div className="flex-1" />
           <Button variant="ghost" size="sm" onClick={onClose} disabled={saving}>
@@ -68,13 +89,14 @@ export default function ScriptEditorModal({
       <div className="space-y-3">
         {isNew && (
           <div>
-            <label className="mb-1 block font-mono text-xs text-ps-text-muted">Filename</label>
-            <input
+            <label htmlFor="script-filename" className="mb-1 block font-mono text-micro text-ps-text-muted">Filename</label>
+            <Input
+              id="script-filename"
               value={name}
               onChange={(e) => onNameChange(e.target.value)}
-              placeholder="my-script.sh" aria-label="my-script.sh"
+              placeholder="my-script.mjs"
               spellCheck={false}
-              className="w-full rounded-lg border border-white/10 bg-dark-800 px-3 py-2 font-mono text-sm text-ps-text-primary outline-none focus:border-neon-cyan/50"
+              className="font-mono"
             />
           </div>
         )}
@@ -82,7 +104,8 @@ export default function ScriptEditorModal({
           <div className="py-8"><LoadingSpinner text="Loading script…" /></div>
         ) : (
           <>
-            <textarea aria-label="Script content"
+            <Textarea
+              aria-label="Script content"
               value={content}
               onChange={(e) => onContentChange(e.target.value)}
               onKeyDown={(e) => {
@@ -101,10 +124,10 @@ export default function ScriptEditorModal({
               }}
               spellCheck={false}
               rows={20}
-              className="block w-full resize-y rounded-lg border border-white/10 bg-dark-800 p-3 font-mono text-[13px] leading-relaxed text-ps-text-primary outline-none focus:border-neon-cyan/50"
+              className="block leading-relaxed"
               style={{ tabSize: 2 }}
             />
-            <div className="flex items-center justify-between font-mono text-xs text-ps-text-muted">
+            <div className="flex items-center justify-between font-mono text-micro text-ps-text-muted">
               <span>{content.split("\n").length} lines · {new Blob([content]).size} bytes</span>
               <span>Tab = 2 spaces · ⌘/Ctrl+S to save · runs server-side via /bin/bash</span>
             </div>

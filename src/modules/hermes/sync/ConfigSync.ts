@@ -21,9 +21,10 @@ import { access, constants } from "fs/promises";
 import { readFile } from "fs/promises";
 import yaml from "js-yaml";
 import { getActiveHermesPaths } from "../lib/agent-runtime";
-import { setMultipleStats } from "@/lib/system-repository";
-import { logApiError } from "@/lib/api-logger";
+import { setMultipleStats } from "@/lib/system/system-repository";
+import { logApiError } from "@/lib/api/api-logger";
 import type { SyncSource, SyncResult } from "@/lib/sync/types";
+import { syncFailure, syncSuccess } from "@/lib/sync/types";
 
 async function fileExists(path: string): Promise<boolean> {
   try {
@@ -57,12 +58,7 @@ export class ConfigSync implements SyncSource {
           "config.soul_present": soulPresent,
           "config.yaml_error": "",
         });
-        return {
-          sourceName: this.name,
-          success: true,
-          syncedCount: 2,
-          durationMs: Math.round(performance.now() - start),
-        };
+        return syncSuccess(this.name, 2, start);
       }
 
       const raw = await readFile(configPath, "utf-8");
@@ -80,10 +76,17 @@ export class ConfigSync implements SyncSource {
       try {
         yaml.load(raw);
       } catch (yamlErr) {
-        const message = yamlErr instanceof Error ? yamlErr.message : String(yamlErr);
+        // First line only, and for everything downstream: a YAMLException
+        // carries a code-frame of the file around the fault, and a real
+        // config.yaml holds api_key lines. This string is logged AND stored as
+        // config.yaml_error, which the monitor route carries to the dashboard
+        // (T-0086, the same hygiene ruling as T-0060's PUT refusal).
+        const message = (yamlErr instanceof Error ? yamlErr.message : String(yamlErr))
+          .split(String.fromCharCode(10))[0]
+          .trim();
         // Log once per distinct error (no per-tick spam).
         if (message !== lastYamlErrorSignature) {
-          logApiError("ConfigSync", "yaml.load failed (non-fatal — config is malformed)", yamlErr);
+          logApiError("ConfigSync", "yaml.load failed (non-fatal — config is malformed)", message);
           lastYamlErrorSignature = message;
         }
         // Surface the malformed-config state so the dashboard can show ONE
@@ -92,12 +95,7 @@ export class ConfigSync implements SyncSource {
           "config.present": "true",
           "config.yaml_error": message,
         });
-        return {
-          sourceName: this.name,
-          success: true,
-          syncedCount: 0,
-          durationMs: Math.round(performance.now() - start),
-        };
+        return syncSuccess(this.name, 0, start);
       }
       // Parsed cleanly — clear any prior malformed-config alert + log gate.
       lastYamlErrorSignature = null;
@@ -119,21 +117,10 @@ export class ConfigSync implements SyncSource {
         "config.yaml_error": "",
       });
 
-      return {
-        sourceName: this.name,
-        success: true,
-        syncedCount: 2,
-        durationMs: Math.round(performance.now() - start),
-      };
+      return syncSuccess(this.name, 2, start);
     } catch (err) {
       logApiError("ConfigSync", "syncing config", err);
-      return {
-        sourceName: this.name,
-        success: false,
-        syncedCount: 0,
-        error: String(err),
-        durationMs: Math.round(performance.now() - start),
-      };
+      return syncFailure(this.name, err, start);
     }
   }
 }

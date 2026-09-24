@@ -1,5 +1,5 @@
-/* eslint-disable @typescript-eslint/no-require-imports */
 /** @jest-environment node */
+/* eslint-disable @typescript-eslint/no-require-imports */
 
 // Tests for the `requireMissionOrNotFound(body)` 2-step helper that
 // consolidates the `requireMissionId` + `getMissionOrNotFound` pattern
@@ -13,50 +13,13 @@
 // The 3 callers all short-circuit on `instanceof NextResponse` and
 // pass the returned Mission record through to the next step.
 
-jest.mock("next/server", () => {
-  const responses: Array<{ data: unknown; init?: ResponseInit }> = [];
-  class NextResponse {
-    ok: boolean;
-    status: number;
-    private _data: unknown;
-    constructor(data: unknown = null, init?: ResponseInit) {
-      this._data = data;
-      this.status = init?.status ?? 200;
-      this.ok = this.status >= 200 && this.status < 300;
-    }
-    json() { return Promise.resolve(this._data); }
-    static json(data: unknown, init?: ResponseInit) {
-      responses.push({ data, init });
-      return new NextResponse(data, init);
-    }
-  }
-  return {
-    NextRequest: class NextRequest {
-      url: string;
-      method: string;
-      headers: Headers;
-      private _body: string;
-      constructor(url: string, init?: RequestInit) {
-        this.url = url;
-        this.method = init?.method ?? "GET";
-        this.headers = new Headers(init?.headers as HeadersInit);
-        this._body = typeof init?.body === "string" ? init.body : JSON.stringify(init?.body ?? {});
-      }
-      async json() { return JSON.parse(this._body); }
-    },
-    NextResponse,
-    __responses: responses,
-  };
-});
+jest.mock("next/server", () => require("../helpers/mocks").nextServerMock());
 
-jest.mock("@/lib/api-logger", () => ({ logApiError: jest.fn() }));
-jest.mock("@/lib/api-auth", () => ({
-  // requireNotReadOnly is the honest name of what these routes call now;
-  // requireAuth stays mocked for the modules that have not been renamed yet.
-  requireNotReadOnly: jest.fn(() => null),
+jest.mock("@/lib/api/api-logger", () => ({ logApiError: jest.fn() }));
+jest.mock("@/lib/api/api-auth", () => ({
   isReadOnly: jest.fn(() => false),
 }));
-jest.mock("@/lib/audit-log", () => ({ appendAuditLine: jest.fn() }));
+jest.mock("@/lib/api/audit-log", () => ({ appendAuditLine: jest.fn() }));
 
 const mockGetMission = jest.fn();
 jest.mock("@/lib/missions/mission-repository", () => ({
@@ -89,7 +52,7 @@ jest.mock("@/lib/orchestration", () => ({
 }));
 
 // The seams the shared cancel finaliser touches (T-0070).
-jest.mock("@/lib/runs-repository", () => ({
+jest.mock("@/lib/runs/runs-repository", () => ({
   getLatestRunForMission: jest.fn(() => null),
   updateRun: jest.fn(),
 }));

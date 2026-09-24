@@ -15,9 +15,11 @@
  * — the dashboard's core reads. The mode blanks the UI it exists to enable.
  *
  * WHY IT SURVIVED 33 ROUTES, which is what the structural tests below exist to
- * stop: `tests/helpers/api-test-helpers.ts` mocks `@/lib/api-auth` wholesale
- * with `isReadOnly: () => false`, and roughly fifteen files repeat that inline.
- * Read-only mode does not exist in the unit suite. A test that asserts a route
+ * stop: `tests/helpers/api-test-helpers.ts` USED TO MOCK `@/lib/api/api-auth`
+ * wholesale with `isReadOnly: () => false`, and roughly fifteen files repeated
+ * that inline. Read-only mode did not exist in the unit suite. (The helper
+ * mocks api-auth no longer at all — tests-13, T-0154 — and
+ * `read-only-is-testable.test.ts` holds it to that.) A test that asserts a route
  * answers under read-only cannot be written against a mock that has already
  * decided the answer, so these assertions read the real module and the real
  * environment variable.
@@ -28,7 +30,7 @@ import { join } from "path";
 
 import { NextRequest } from "next/server";
 
-import { SESSION_COOKIE } from "@/lib/auth-token";
+import { SESSION_COOKIE } from "@/lib/api/auth-token";
 
 const TOKEN = "test-token-abcdefghijklmnop";
 const API_ROOT = join(__dirname, "..", "..", "src", "app", "api");
@@ -81,21 +83,40 @@ function routeFiles(dir = API_ROOT, out: string[] = []): string[] {
  */
 let handlersSeen = 0;
 
+/**
+ * The one sanctioned exception, mirrored from check-read-only-guards.mjs: a
+ * read handler that genuinely performs a write may consult the mode to SKIP
+ * that write, and must say why on the line above (B1, T-0095: three GETs did
+ * bookkeeping writes on every poll, and the fix is a guarded skip, not a 503).
+ */
+const PRAGMA = /\/\/\s*check-read-only-guards-disable-next-line\s+--\s+\S/;
+
 function guardCallsByMethod(file: string): Array<{ method: string; line: number; text: string }> {
   const found: Array<{ method: string; line: number; text: string }> = [];
   let current = "";
+  let exempt = false;
   const lines = readFileSync(file, "utf-8").split(/\r?\n/);
   lines.forEach((raw, i) => {
-    const handler = /^export (?:async )?function (GET|HEAD|OPTIONS|POST|PUT|DELETE|PATCH)\b/.exec(raw);
+    // Two spellings since C1 (T-0136): the declared function, and the
+    // handler exported through the route() wrapper, both at column zero.
+    const handler = /^export (?:(?:async )?function (GET|HEAD|OPTIONS|POST|PUT|DELETE|PATCH)\b|const (GET|HEAD|OPTIONS|POST|PUT|DELETE|PATCH) = route\()/.exec(raw);
     if (handler) {
-      current = handler[1];
+      current = handler[1] ?? handler[2];
       handlersSeen += 1;
     }
     const trimmed = raw.trim();
-    if (trimmed.startsWith("//") || trimmed.startsWith("*") || trimmed.startsWith("/*")) return;
+    if (trimmed.startsWith("//") || trimmed.startsWith("*") || trimmed.startsWith("/*")) {
+      exempt = PRAGMA.test(raw);
+      return;
+    }
     if (/\b(requireAuth|requireNotReadOnly|isReadOnly)\s*\(/.test(raw)) {
+      if (exempt) {
+        exempt = false;
+        return;
+      }
       found.push({ method: current, line: i + 1, text: trimmed });
     }
+    exempt = false;
   });
   return found;
 }
@@ -143,7 +164,7 @@ describe("the read-only guard has left the route handlers", () => {
   });
 
   it("`requireAuth` is no longer exported at all", async () => {
-    const mod = await import("@/lib/api-auth");
+    const mod = await import("@/lib/api/api-auth");
     expect("requireAuth" in mod).toBe(false);
   });
 });
@@ -211,6 +232,7 @@ describe("proxy — read-only reads, refuses writes, and authenticates first", (
     "/api/stories",
     "/api/credentials",
     "/api/update",
+    "/api/backup",
   ];
 
   it.each(FORMERLY_SELF_GUARDED)("refuses a write to %s under PS_READ_ONLY", async (path) => {
@@ -285,7 +307,7 @@ describe("the read-only refusal says one true thing", () => {
 
   it("no source file still carries the backwards wording", () => {
     const offenders = routeFiles()
-      .concat([join(__dirname, "..", "..", "src", "lib", "api-auth.ts")])
+      .concat([join(__dirname, "..", "..", "src", "lib", "api", "api-auth.ts")])
       .filter((f) => /set PS_READ_ONLY=true to allow writes/.test(readFileSync(f, "utf-8")));
     expect(offenders).toEqual([]);
   });

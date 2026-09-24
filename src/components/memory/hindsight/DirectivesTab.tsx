@@ -5,7 +5,9 @@
 import { FileText, Plus, ToggleRight, ToggleLeft, RefreshCw } from "lucide-react";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
-import { LoadingSpinner, EmptyState } from "@/components/ui/LoadingSpinner";
+import Card from "@/components/ui/Card";
+import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
+import { EmptyState } from "@/components/ui/EmptyState";
 import { pluralise } from "@/lib/utils";
 import { RowEditButton, RowDeleteButton } from "./RowActionButtons";
 import type { Directive } from "./types";
@@ -32,7 +34,7 @@ export default function DirectivesTab({
   return (
     <>
       <div className="flex justify-between items-center mb-4">
-        <div className="text-xs text-ps-text-muted">
+        <div className="text-body text-ps-text-muted">
           {directives.length} directive{pluralise(directives.length)} — injected into agent prompts automatically
         </div>
         <div className="flex gap-2">
@@ -61,18 +63,14 @@ export default function DirectivesTab({
       ) : (
         <div className="space-y-3">
           {directives.map((d) => (
-            <div
+            <Card
               key={d.id}
-              className={`rounded-xl border p-4 transition-colors ${
-                d.is_active
-                  ? "border-white/10 bg-dark-900/50 hover:border-pink-500/20"
-                  : "border-white/5 bg-dark-900/20 opacity-60"
-              }`}
+              className={d.is_active ? "transition-colors hover:border-neon-pink/20" : "opacity-60"}
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
-                    <span className="text-sm font-medium text-ps-text-primary">{d.name}</span>
+                    <span className="text-body font-medium text-ps-text-primary">{d.name}</span>
                     {d.priority > 0 && (
                       <Badge color="orange" size="sm">P{d.priority}</Badge>
                     )}
@@ -80,7 +78,7 @@ export default function DirectivesTab({
                       <Badge color="gray" size="sm">Inactive</Badge>
                     )}
                   </div>
-                  <p className="text-sm text-ps-text-secondary leading-relaxed">{d.content}</p>
+                  <p className="text-body text-ps-text-secondary leading-relaxed">{d.content}</p>
                   {d.tags.length > 0 && (
                     <div className="flex gap-1 mt-2">
                       {d.tags.map(t => <Badge key={t} color="purple" size="sm">{t}</Badge>)}
@@ -91,15 +89,15 @@ export default function DirectivesTab({
                   <RowEditButton onClick={() => onEdit(d)} />
                   <button
                     onClick={() => onToggle(d)}
-                    className="p-1.5 rounded-lg hover:bg-white/5 text-ps-text-muted hover:text-ps-text-secondary transition-colors"
+                    className="p-1.5 rounded-ps-md hover:bg-ps-surface-raised text-ps-text-muted hover:text-ps-text-secondary transition-colors"
                     title={d.is_active ? "Deactivate" : "Activate"}
                   >
-                    {d.is_active ? <ToggleRight className="w-4 h-4 text-green-400" /> : <ToggleLeft className="w-4 h-4" />}
+                    {d.is_active ? <ToggleRight className="w-4 h-4 text-status-ok" /> : <ToggleLeft className="w-4 h-4" />}
                   </button>
-                  <RowDeleteButton onClick={() => onDelete(d.id)} />
+                  <RowDeleteButton onClick={() => onDelete(d.id)} label={d.name} />
                 </div>
               </div>
-            </div>
+            </Card>
           ))}
         </div>
       )}

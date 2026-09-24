@@ -14,12 +14,14 @@ import {
   getDueSchedules,
   advanceSchedule,
   type ScheduleRecord,
-} from "@/lib/schedules-repository";
-import { createRun } from "@/lib/runs-repository";
+} from "@/lib/schedule/schedules-repository";
+import { createRun } from "@/lib/runs/runs-repository";
 import { hasDispatchedMission } from "@/lib/missions/mission-repository";
 import { computeNextRun } from "@/lib/schedule/next-run";
+import { scheduleIntervalStatus } from "@/lib/schedule/interval-bounds";
 import { dispatchMissionRun } from "@/lib/orchestration/dispatch";
-import { logApiError } from "@/lib/api-logger";
+import { runScriptFile } from "@/lib/scripts/scripts-manager";
+import { logApiError } from "@/lib/api/api-logger";
 import { recordEvent } from "@/lib/analytics/record-event";
 import { checkUnattendedSpend } from "@/lib/spend/spend-guard";
 
@@ -55,7 +57,102 @@ function advanceToNext(
 }
 
 /** Fire (or skip) one due schedule. Returns true if a run was dispatched. */
+/**
+ * Run the host script a schedule row names.
+ *
+ * Deliberately NOT the mission path with a different verb at the end. A script
+ * run is not an agent run: it claims no `runs` row (those carry a mission), and
+ * it is not held behind the one-mission-at-a-time single flight, which is about
+ * the agent rather than about the host. What it does share is the catch-up
+ * policy and the advance, because those are statements about the schedule.
+ */
+async function fireScriptSchedule(sched: ScheduleRecord, nowDate: Date): Promise<boolean> {
+  // The same shape as the orphaned-mission branch: a row that names nothing
+  // can never fire, so it says so once and stops being selected.
+  if (!sched.scriptName) {
+    advanceSchedule(sched.id, {
+      nextRunAt: null,
+      lastRunAt: nowDate.toISOString(),
+      lastRunId: null,
+      lastStatus: "skipped: no script named",
+      enabled: false,
+    });
+    return false;
+  }
+
+  const dueAt = sched.nextRunAt ? new Date(sched.nextRunAt) : nowDate;
+  if (sched.catchUpPolicy === "skip" && nowDate.getTime() - dueAt.getTime() > CATCH_UP_GRACE_MS) {
+    advanceToNext(sched, nowDate, null, "skipped (catch-up)", false);
+    return false;
+  }
+
+  const result = await runScriptFile(sched.scriptName);
+  const notStartedReason = result.error ?? "the host could not start it";
+  advanceToNext(
+    sched,
+    nowDate,
+    null,
+    result.outcome === "succeeded"
+      ? "ran"
+      : result.outcome === "not-started"
+        ? `did not start: ${notStartedReason}`
+        : `error: ${result.error ?? "script exited non-zero"}`,
+    true,
+  );
+  // After the advance, never before it: no event claims a run the row does not
+  // record.
+  //
+  // Recorded whichever way it went, which it was not before: a nightly backup
+  // that failed left nothing behind at all, so "did last night's backup work?"
+  // and "did last night's backup run?" had the same answer, silence. A failure
+  // is recorded as a failure, so the row that says nothing is now only ever a
+  // run that did not happen.
+  if (result.outcome === "not-started") {
+    recordEvent("script.run_not_started", {
+      entityType: "script",
+      entityId: sched.scriptName,
+      metadata: { source: "scheduler", reason: notStartedReason },
+    });
+  } else {
+    recordEvent("script.run", {
+      entityType: "script",
+      entityId: sched.scriptName,
+      metadata: { source: "scheduler", outcome: result.outcome, exitCode: result.exitCode },
+    });
+  }
+  return result.ok;
+}
+
 async function fireSchedule(sched: ScheduleRecord, nowDate: Date): Promise<boolean> {
+  // BEFORE everything, including the kind branch, because this is the row that
+  // costs money on a loop. The write paths now refuse an interval outside the
+  // bounds, but rows written before they did, and rows written straight into
+  // the database, still land here. `every 0m` is due again the moment it fires,
+  // so it dispatched a paid agent run on every tick forever; an interval past
+  // the far end of the calendar dispatched first and then threw on the advance,
+  // which left next_run_at in the past and did the same thing.
+  //
+  // Disabled rather than skipped, and it says why: a row that is silently
+  // stepped over is the enabled-and-dead shape this scheduler has been bitten
+  // by before. The operator sees the reason on the schedule and can fix it.
+  const intervalStatus = scheduleIntervalStatus(sched.schedule);
+  if (intervalStatus) {
+    advanceSchedule(sched.id, {
+      nextRunAt: null,
+      lastRunAt: nowDate.toISOString(),
+      lastRunId: null,
+      lastStatus: intervalStatus,
+      enabled: false,
+    });
+    return false;
+  }
+
+  // BEFORE the orphan check, and that order is the whole point. A script row
+  // has no mission, so the branch below would disable every row migration 041
+  // creates on the first tick that saw it, and the feature would be dead on
+  // arrival while looking perfectly wired (T-0107, decision 10).
+  if (sched.kind === "script") return fireScriptSchedule(sched, nowDate);
+
   // Orphaned schedule (mission deleted) — disable so it stops being selected.
   if (!sched.missionId) {
     advanceSchedule(sched.id, {

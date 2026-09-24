@@ -11,9 +11,16 @@ import {
   Zap,
 } from "lucide-react";
 import { ChevronRight } from "lucide-react";
+import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
-import { timeAgo, titleCase } from "@/lib/utils";
-import { useTwoStepConfirm } from "@/hooks/useTwoStepConfirm";
+import Card from "@/components/ui/Card";
+import ConfirmButton from "@/components/ui/ConfirmButton";
+import LoadErrorBanner from "@/components/ui/LoadErrorBanner";
+import RunProgress from "@/components/schedule/RunProgress";
+import ConceptHint from "@/components/help/ConceptHint";
+import { useApiResource } from "@/hooks/useApiResource";
+import { timeAgo, timeUntil } from "@/lib/utils";
+import { describeScheduleFiring } from "@/lib/missions/mission-schedule-view";
 import type { MissionDetail, MissionRow } from "@/hooks/missions-page-types";
 import {
   isMissionDraft,
@@ -21,7 +28,6 @@ import {
 } from "@/lib/missions/mission-board";
 import { describeMissionRunState } from "@/lib/missions/mission-run-state";
 import { RUN_TONE_TEXT } from "@/components/missions/mission-page-constants";
-import MissionLiveProgress from "@/components/missions/MissionLiveProgress";
 
 export interface MissionEditorPanelProps {
   detail: MissionDetail | null;
@@ -35,6 +41,43 @@ export interface MissionEditorPanelProps {
   isCancelling?: boolean;
   onDelete: (id: string) => void;
   onDuplicate?: (m: MissionRow) => void;
+}
+
+/** The run id, or null while dispatch has not created one. */
+interface RunLookup {
+  runId: string | null;
+}
+
+/**
+ * The run streaming under a dispatched mission. This panel is its one caller,
+ * so it lives here (C6).
+ */
+function MissionLiveProgress({ missionId }: { missionId: string }) {
+  // Polls every two seconds until the run exists, then stops: the interval is
+  // a function of what was read (T-0129), which is what the raw useQuery did
+  // with its own state before every read went through the one hook.
+  const { data, error } = useApiResource<RunLookup>(`/api/missions/${missionId}/run`, {
+    select: (p) => ({ runId: (p as { run?: { id?: string } | null } | null)?.run?.id ?? null }),
+    errorMessage: "Could not read the mission's run",
+    refetchInterval: (value) => (value?.runId ? false : 2000),
+  });
+
+  if (error) {
+    return <LoadErrorBanner compact error={`Live run unavailable: ${error}`} />;
+  }
+
+  if (!data?.runId) return null;
+
+  return (
+    <div>
+      {/* Where the word "run" is actually met on this screen: one dispatch of
+          this mission, streaming underneath. */}
+      <div className="text-micro font-mono text-ps-text-muted uppercase mb-1">
+        Live <ConceptHint id="run">run</ConceptHint>
+      </div>
+      <RunProgress runId={data.runId} />
+    </div>
+  );
 }
 
 export default function MissionEditorPanel({
@@ -59,21 +102,12 @@ export default function MissionEditorPanel({
     }
   };
 
-  // Per-row two-step confirms for the 2 destructive actions exposed
-  // by this panel. The pre-session 207 form did the confirm inside
-  // the `useMissionsPage` hook callbacks (handleDelete + handleCancel)
-  // — a single global `window.confirm` dialog with no per-row
-  // context. Lifting the confirm into the leaf component gives each
-  // expanded-mission row its own armed state so a stale "armed" from
-  // one row cannot accidentally fire when the user clicks a different
-  // row's destructive button minutes later. Mirrors the session 200
-  // per-row `useTwoStepConfirm({ autoDismissMs: 4000 })` shape that
-  // the Models table + FallbackChainList use. The hook callbacks
-  // (`useMissionsPage.handleDelete` / `.handleCancel`) no longer need
-  // to know about confirm-state — that's now owned by the leaf
-  // component, where the mission id is in scope at render time.
-  const deleteConfirm = useTwoStepConfirm({ autoDismissMs: 4000 });
-  const cancelConfirm = useTwoStepConfirm({ autoDismissMs: 4000 });
+  // The two destructive actions are ConfirmButtons: each instance owns its
+  // own armed state, so a stale arm on one row cannot fire on another, and
+  // neither is ever disabled BY being armed. That second half is the blocker
+  // this panel shipped: Cancel armed on the first click and disabled itself
+  // on the same predicate, so the confirming click could never land and a
+  // running mission could not be cancelled from the board (T-0096, D66).
 
   // The run behind this mission. `detail.run` is the authoritative copy
   // (fetched with the mission itself); the row's own copy is the fallback for
@@ -82,40 +116,15 @@ export default function MissionEditorPanel({
   /* eslint-disable-next-line react-hooks/purity -- a live duration reads the wall clock; the missions page repolls every 15s, which is what advances it */
   const runState = describeMissionRunState({ ...(detail?.mission ?? mission), run }, Date.now());
 
-  // Click handlers for the 2 destructive buttons. Each branches on
-  // whether the per-row key (the mission id) is currently armed: if
-  // not armed, arm; if armed, run the action. Byte-equivalent to the
-  // pre-migration `onClick={() => onDelete(mission.id)}` shape
-  // (the action runs on every click in the pre-migration form,
-  // guarded by `window.confirm` inside the hook) — but with a
-  // styled "Confirm?" state in the leaf and a per-row 4-second
-  // auto-dismiss so an armed state can't outlive the user's intent.
-  // The `cancellingMissionId` busy state for the cancel button is
-  // preserved (the cancel-in-flight spinner is the parent-owned
-  // loading indicator that survives both pre- and post-migration).
-  const handleDeleteClick = () => {
-    if (!deleteConfirm.isArmedFor(mission.id)) {
-      deleteConfirm.arm(mission.id);
-      return;
-    }
-    void deleteConfirm.confirm(() => onDelete(mission.id));
-  };
-  const handleCancelClick = () => {
-    if (!cancelConfirm.isArmedFor(mission.id)) {
-      cancelConfirm.arm(mission.id);
-      return;
-    }
-    void cancelConfirm.confirm(() => onCancel(mission.id));
-  };
   return (
-    <div className="border-t border-white/10 px-3 py-3 bg-dark-800/30">
+    <div className="border-t border-ps-edge-hairline px-3 py-3 bg-ps-surface-raised">
       {detailLoading ? (
         <div className="flex items-center justify-center py-4">
           <Loader2 className="w-4 h-4 text-neon-cyan animate-spin" />
         </div>
       ) : detail ? (
         <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs font-mono">
+          <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-micro font-mono">
             <div className="flex justify-between">
               <span className="text-ps-text-muted">Agent</span>
               <span className="text-ps-text-secondary truncate ml-2 text-right">
@@ -158,10 +167,15 @@ export default function MissionEditorPanel({
                 <span className="text-ps-text-secondary ml-2 text-right">{categoryLabel}</span>
               </div>
             )}
+            {/* Cadence, not Schedule: the card below is headed Schedule, and
+                two things by that name in one panel is what neither a reader
+                nor a test can tell apart (T-0104). */}
             <div className="flex justify-between">
-              <span className="text-ps-text-muted">Schedule</span>
+              <span className="text-ps-text-muted">Cadence</span>
               <span className="text-ps-text-secondary truncate ml-2 text-right">
-                {detail.mission.schedule || "One-shot"}
+                {detail.schedule
+                  ? detail.schedule.scheduleDisplay || detail.schedule.schedule
+                  : "One-shot"}
               </span>
             </div>
             <div className="flex justify-between">
@@ -182,11 +196,11 @@ export default function MissionEditorPanel({
               }
               className="w-full flex items-center justify-between mb-1 hover:opacity-80 transition-opacity"
             >
-              <div className="text-xs font-mono text-ps-text-muted uppercase flex items-center gap-1.5">
+              <div className="text-micro font-mono text-ps-text-muted uppercase flex items-center gap-1.5">
                 <Edit3 className="w-3 h-3" />
                 Full Template Details
               </div>
-              <div className="flex items-center gap-1 text-xs font-mono text-ps-text-muted">
+              <div className="flex items-center gap-1 text-micro font-mono text-ps-text-muted">
                 <span>
                   {promptCollapsed
                     ? "show"
@@ -200,30 +214,25 @@ export default function MissionEditorPanel({
             <div
               className={`overflow-hidden transition-all duration-200 ${promptCollapsed ? "max-h-20" : "max-h-none"}`}
             >
-              <div className="text-xs text-ps-text-muted font-mono whitespace-pre-wrap bg-dark-900/50 rounded-lg p-2 border border-white/5">
+              <Card padding="none" className="p-2 text-micro text-ps-text-muted font-mono whitespace-pre-wrap">
                 {detail.mission.prompt}
-              </div>
+              </Card>
             </div>
           </div>
 
           {(detail.mission.goals?.length ?? 0) > 0 && (
             <div>
-              <div className="text-xs font-mono text-ps-text-muted uppercase mb-1">
+              <div className="text-micro font-mono text-ps-text-muted uppercase mb-1">
                 Goals
               </div>
               <div className="flex flex-wrap gap-1">
                 {(detail.mission.goals ?? [])
                   .slice(0, 3)
                   .map((goal, i) => (
-                    <span
-                      key={i}
-                      className="text-xs font-mono px-1.5 py-0.5 rounded bg-white/5 text-ps-text-muted border border-white/5"
-                    >
-                      {goal}
-                    </span>
+                    <Badge key={i}>{goal}</Badge>
                   ))}
                 {(detail.mission.goals?.length ?? 0) > 3 && (
-                  <span className="text-xs font-mono text-ps-text-faint">
+                  <span className="text-micro font-mono text-ps-text-faint">
                     +
                     {(detail.mission.goals?.length ?? 0) - 3}
                     {" "}
@@ -234,65 +243,51 @@ export default function MissionEditorPanel({
             </div>
           )}
 
-          {detail.cronJob && (
-            <div className="rounded-lg border border-neon-orange/20 bg-dark-900/50 p-2">
+          {detail.schedule && (
+            <Card padding="none" className="p-2">
               <div className="flex items-center justify-between mb-1">
                 <div className="flex items-center gap-1">
                   <Zap className="w-3 h-3 text-neon-orange" />
-                  <span className="text-xs font-mono text-ps-text-secondary">
-                    Cron Job
-                  </span>
+                  <span className="text-micro font-mono text-ps-text-secondary">Schedule</span>
                 </div>
+                {/* The old "view" link pointed at the Hermes cron surface, which
+                    is not where this schedule lives. It lives on this page. */}
                 <Link
-                  // /orchestration/cron has never existed. The cron surface is
-                  // /config/cron (src/lib/modules/registry.ts), so this "view"
-                  // link answered "which job is this?" with a 404.
-                  href={
-                    detail.cronJob.id
-                      ? `/config/cron?highlight=${encodeURIComponent(detail.cronJob.id)}`
-                      : "/config/cron"
-                  }
+                  href="#scheduled-missions"
                   onClick={(e) => e.stopPropagation()}
-                  className="text-xs font-mono text-neon-orange hover:underline flex items-center gap-0.5"
+                  className="text-micro font-mono text-neon-orange hover:underline flex items-center gap-0.5"
                 >
-                  view
+                  Edit schedule
                   {" "}
                   <ExternalLink className="w-2.5 h-2.5" />
                 </Link>
               </div>
-              <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-xs font-mono">
+              <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-micro font-mono">
                 <div className="flex justify-between">
-                  <span className="text-ps-text-faint">
-                    State
-                  </span>
-                  <span
-                    className={
-                      detail.cronJob.enabled
-                        ? "text-neon-green"
-                        : "text-ps-text-muted"
-                    }
-                  >
-                    {detail.cronJob.enabled
-                      ? titleCase(
-                          detail.cronJob.state,
-                        )
-                      : "Disabled"}
+                  <span className="text-ps-text-faint">Next</span>
+                  <span className="text-ps-text-muted">
+                    {detail.schedule.nextRunAt ? timeUntil(detail.schedule.nextRunAt) : "None"}
                   </span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-ps-text-faint">
-                    Last
-                  </span>
+                  <span className="text-ps-text-faint">Last</span>
                   <span className="text-ps-text-muted">
-                    {detail.cronJob.lastRun
-                      ? timeAgo(
-                          detail.cronJob.lastRun,
-                        )
-                      : "Never"}
+                    {detail.schedule.lastRunAt ? timeAgo(detail.schedule.lastRunAt) : "Never"}
                   </span>
                 </div>
               </div>
-            </div>
+              {detail.schedule.lastStatus && (
+                <p className="mt-1 text-micro font-mono text-ps-text-muted">
+                  Last result: {detail.schedule.lastStatus}
+                </p>
+              )}
+              {/* Scheduled and going to happen are not the same thing. */}
+              {describeScheduleFiring(detail.schedule) && (
+                <p className="mt-1 text-body text-status-warn">
+                  {describeScheduleFiring(detail.schedule)}
+                </p>
+              )}
+            </Card>
           )}
 
           {/* The timing note is the "is it stuck" answer: how long is left
@@ -300,10 +295,10 @@ export default function MissionEditorPanel({
               that point. Rendered only while there is something to say. */}
           {runState.note && (
             <div
-              className={`rounded-lg border px-2 py-1.5 text-xs font-mono ${
+              className={`rounded-ps-md border px-2 py-1.5 text-micro font-mono ${
                 runState.tone === "overdue"
                   ? "border-neon-orange/30 bg-neon-orange/5 text-neon-orange"
-                  : "border-white/5 bg-dark-900/50 text-ps-text-muted"
+                  : "border-ps-edge-hairline bg-ps-surface-panel text-ps-text-muted"
               }`}
             >
               {runState.note}
@@ -316,12 +311,12 @@ export default function MissionEditorPanel({
 
           {detail.mission.result && (
             <div>
-              <div className="text-xs font-mono text-ps-text-muted uppercase mb-1">
+              <div className="text-micro font-mono text-ps-text-muted uppercase mb-1">
                 Result
               </div>
-              <div className="text-xs text-ps-text-secondary font-mono whitespace-pre-wrap bg-dark-900/50 rounded-lg p-2 border border-white/5 max-h-40 overflow-y-auto">
+              <Card padding="none" className="p-2 text-micro text-ps-text-secondary font-mono whitespace-pre-wrap max-h-40 overflow-y-auto">
                 {detail.mission.result}
-              </div>
+              </Card>
             </div>
           )}
 
@@ -329,14 +324,14 @@ export default function MissionEditorPanel({
               run row and never shown: the panel read `mission.error`, a field
               no route sets, so a failed mission explained nothing. */}
           {run?.error && (
-            <div className="rounded-lg bg-red-500/5 border border-red-500/10 p-2">
-              <div className="text-xs font-mono text-red-400 uppercase mb-0.5">
+            <Card padding="none" className="p-2">
+              <div className="text-micro font-mono text-status-fail uppercase mb-0.5">
                 Run error
               </div>
-              <div className="text-xs font-mono text-red-300 whitespace-pre-wrap break-words">
+              <div className="text-micro font-mono text-ps-text-secondary whitespace-pre-wrap break-words">
                 {run.error}
               </div>
-            </div>
+            </Card>
           )}
 
           <div className="flex flex-wrap gap-1.5 pt-1">
@@ -351,6 +346,18 @@ export default function MissionEditorPanel({
               >
                 Duplicate
               </Button>
+            )}
+            {/* Everything this mission produced. The mirror of
+                mission-deep-link.ts, which is how a session row opens its
+                parent mission (T-0104, D69). */}
+            {mission.sessionId && (
+              <Link
+                href={`/results/sessions?missionId=${encodeURIComponent(mission.id)}`}
+                onClick={(e) => e.stopPropagation()}
+                className="inline-flex items-center gap-1 rounded-ps-md border border-ps-edge-hairline px-2.5 py-1.5 text-micro font-mono text-ps-text-secondary hover:border-ps-edge-emphasis hover:text-ps-text-primary transition-colors"
+              >
+                View sessions
+              </Link>
             )}
             {isMissionDraft(mission) ? (
               <Button
@@ -373,43 +380,39 @@ export default function MissionEditorPanel({
               </Button>
             )}
             {(mission.status === "dispatched" || isMissionQueuedForRun(mission)) && (
-              <Button
+              <ConfirmButton
                 variant="danger"
                 size="sm"
                 loading={isCancelling}
-                disabled={isCancelling || cancelConfirm.isArmedFor(mission.id)}
-                onClick={handleCancelClick}
+                onConfirm={() => onCancel(mission.id)}
+                confirmLabel="Confirm?"
               >
-                {!isCancelling && !cancelConfirm.isArmedFor(mission.id) ? (
-                  <StopCircle className="w-3 h-3" />
-                ) : null}
+                {!isCancelling ? <StopCircle className="w-3 h-3" /> : null}
                 {isCancelling
                   ? "Cancelling…"
-                  : cancelConfirm.isArmedFor(mission.id)
-                    ? "Confirm?"
-                    : mission.status === "dispatched"
-                      ? "Cancel"
-                      : "Remove from queue"}
-              </Button>
+                  : mission.status === "dispatched"
+                    ? "Cancel"
+                    : "Remove from queue"}
+              </ConfirmButton>
             )}
-            <Button
+            <ConfirmButton
               variant="ghost"
               size="sm"
               aria-label="Delete mission"
-              onClick={handleDeleteClick}
-              className={
-                deleteConfirm.isArmedFor(mission.id)
-                  ? "ring-1 ring-neon-red/60 bg-neon-red/10 text-neon-red"
-                  : undefined
+              onConfirm={() => onDelete(mission.id)}
+              armedClassName="ring-1 ring-neon-red/60 bg-neon-red/10 text-neon-red"
+              confirmLabel={
+                <>
+                  <Trash2 className="w-3 h-3" /> Confirm?
+                </>
               }
             >
               <Trash2 className="w-3 h-3" />
-              {deleteConfirm.isArmedFor(mission.id) ? " Confirm?" : ""}
-            </Button>
+            </ConfirmButton>
           </div>
         </div>
       ) : (
-        <div className="text-xs text-ps-text-muted text-center py-3">
+        <div className="text-body text-ps-text-muted text-center py-3">
           Failed to load details
         </div>
       )}

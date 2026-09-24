@@ -10,14 +10,14 @@
  *
  * That includes the bulk operations, which have no such 30s bound and no way
  * to ask for more: "Push all"/"Pull all" and the model-catalogue sync both go
- * through `runSyncAction` -> `apiFetch` with no caller signal, so a bulk sync
+ * through `runWrite` -> `apiFetch` with no caller signal, so a bulk sync
  * that legitimately runs past 45s is aborted mid-flight and reported to the
  * operator as a timeout. Seeding is the same shape.
  *
  * The deadline is right; its being a single un-overridable global is not.
  */
 
-import { API_FETCH_TIMEOUT_MS, API_FETCH_BULK_TIMEOUT_MS, apiFetch } from "@/lib/api-fetch";
+import { API_FETCH_TIMEOUT_MS, API_FETCH_BULK_TIMEOUT_MS, apiFetch } from "@/lib/api/api-fetch";
 
 const okJson = () => ({ ok: true, status: 200, json: async () => ({ data: {} }) });
 
@@ -81,13 +81,13 @@ describe("the client deadline is chosen per call, not imposed globally", () => {
 });
 
 describe("the bulk operations actually ask for the bulk deadline", () => {
-  it("runSyncAction forwards a timeoutMs to apiFetch", async () => {
+  it("runWrite forwards a timeoutMs to apiFetch", async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = jest.fn().mockResolvedValue(okJson()) as unknown as typeof fetch;
     const timeoutSpy = jest.spyOn(AbortSignal, "timeout");
     try {
-      const { runSyncAction } = await import("@/lib/operation-sync-action");
-      await runSyncAction({
+      const { runWrite } = await import("@/lib/api/api-write");
+      await runWrite({
         showToast: () => undefined,
         url: "/api/agent/profiles/sync/push",
         body: {},

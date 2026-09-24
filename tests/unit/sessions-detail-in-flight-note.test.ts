@@ -1,3 +1,4 @@
+/** @jest-environment node */
 /**
  * sessions-detail-in-flight-note — unit tests for the in-flight empty-state
  * note added to GET /api/sessions/[id] Step 1.
@@ -19,8 +20,6 @@
  * fires; all other fs lookups return false so Step 2 (file-based) doesn't
  * interfere.
  */
-
-/** @jest-environment node */
 
 // Mock better-sqlite3 to return a controllable handle. The real module is
 // not loadable in tests because it requires the native addon. We override
@@ -73,13 +72,15 @@ jest.mock("@/lib/sessions/session-mission-links", () => ({
 
 jest.mock("@/lib/sessions/sessions-api-guard", () => ({
   getMaxSessionFileBytes: jest.fn(() => 50 * 1024 * 1024),
+  // The route caps the transcript now (T-0105, D40).
+  getMaxSessionMessages: jest.fn(() => 2000),
   sessionsRateLimitResponse: jest.fn(() => null),
 }));
 
-jest.mock("@/lib/api-auth", () => ({
+jest.mock("@/lib/api/api-auth", () => ({
 }));
 
-jest.mock("@/lib/api-logger", () => ({
+jest.mock("@/lib/api/api-logger", () => ({
   logApiError: jest.fn(),
   serverErrorFromCatch: jest.fn(),
 }));
@@ -107,23 +108,8 @@ jest.mock("@/modules/hermes/lib/agent-runtime", () => ({
   })),
 }));
 
-jest.mock("@/lib/paths", () => ({
-  PS_DATA_DIR: "/tmp/ch-data",
-  getPsDataDir: () => "/tmp/ch-data",
-  PATHS: {
-    patterStageDb: "/tmp/ch-data/control-hub.db",
-    missions: "/tmp/ch-data/missions",
-    templates: "/tmp/ch-data/templates",
-    stories: "/tmp/ch-data/stories",
-    recroom: "/tmp/ch-data/recroom",
-    workspaces: "/tmp/ch-data/workspaces",
-    auditLog: "/tmp/ch-data/audit",
-    psScripts: "/tmp/ch-data/scripts",
-    psHardwareLogs: "/tmp/ch-data/logs",
-  },
-  getPsScriptsDir: () => "/tmp/ch-data/scripts",
-  getPsHardwareLogDir: () => "/tmp/ch-data/logs",
-}));
+// eslint-disable-next-line @typescript-eslint/no-require-imports -- jest.mock factories are hoisted above imports
+jest.mock("@/lib/host/paths", () => require("../helpers/mocks").pathsMock({ getPsDataDir: () => "/tmp/ch-data" }));
 
 import { NextRequest } from "next/server";
 

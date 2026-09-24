@@ -7,7 +7,7 @@
 
 import { readdirSync, readFileSync } from "fs";
 import { join } from "path";
-import type DatabaseNs from "better-sqlite3";
+import { migrationsDir, openRealDb, type RealDb } from "../helpers/baseline-db";
 import {
   MIGRATION_HEAD_SCHEMA_VERSION,
   getSchemaVersion,
@@ -16,22 +16,13 @@ import {
 // The last applier's own gate, and the one before it. Imported by their own
 // specifiers, which the global "@/lib/db" mock does not intercept, so these are
 // the real numbers the chain ends on.
+import { OPERATOR_PREFS_SCHEMA_VERSION, MODELS_ORIGIN_SCHEMA_VERSION, RUNS_SPEND_SOURCE_SCHEMA_VERSION, SCHEDULE_KIND_SCHEMA_VERSION, FALLBACK_IDENTITY_SCHEMA_VERSION, RESEARCH_GATHER_SCHEMA_VERSION, RESEARCH_USAGE_SCHEMA_VERSION } from "@/lib/db/sql-migrations";
 import { COMPOSER_NODE_CANCELLED_SCHEMA_VERSION } from "@/lib/db/apply-composer-node-cancelled-migration";
-import { RESEARCH_GATHER_SCHEMA_VERSION } from "@/lib/db/apply-research-gather-migration";
 import { COMPOSER_REJECTED_SCHEMA_VERSION } from "@/lib/db/apply-composer-rejected-migration";
-import { RESEARCH_USAGE_SCHEMA_VERSION } from "@/lib/db/apply-research-usage-migration";
 
 // jest.setup globally mocks "@/lib/db" (no runMigrations on the mock); pull the
 // real implementation so we exercise the actual wiring.
 const { runMigrations } = jest.requireActual<typeof import("@/lib/db")>("@/lib/db");
-
-type RealDb = DatabaseNs.Database;
-
-const Database = jest.requireActual(
-  join(process.cwd(), "node_modules", "better-sqlite3", "lib", "index.js"),
-) as unknown as new (path: string) => RealDb;
-
-const migrationsDir = join(process.cwd(), "src", "lib", "db", "migrations");
 
 function cols(db: RealDb, table: string): string[] {
   return (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((r) => r.name);
@@ -44,7 +35,7 @@ function tableNames(db: RealDb): string[] {
 
 describe("runMigrations upgrade path (real SQLite, real wiring)", () => {
   it("upgrades a degraded legacy install to the full current schema", () => {
-    const db = new Database(":memory:");
+    const db = openRealDb();
     db.pragma("foreign_keys = ON");
     db.exec("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);");
     db.exec(readFileSync(join(migrationsDir, "001_baseline.sql"), "utf-8"));
@@ -143,6 +134,8 @@ describe("runMigrations upgrade path (real SQLite, real wiring)", () => {
       expect.arrayContaining(["retention_policy", "retention_prune_runs"]),
     );
     expect(tableNames(db)).toContain("spend_policy");
+    // The console's own settings land via the wired v38 applier (T-0097).
+    expect(tableNames(db)).toContain("operator_prefs");
     expect(getSchemaVersion(db)).toBe(MIGRATION_HEAD_SCHEMA_VERSION);
 
     // The sister of the retention assertion below, and the reason T-0021 is
@@ -193,7 +186,7 @@ describe("runMigrations upgrade path (real SQLite, real wiring)", () => {
     // (v4→) only run on subsequent passes. getDb() loops to convergence so a
     // single first boot reaches the terminal schema; this guards that contract
     // (regression for "no such table: composer_workflows" on first boot).
-    const db = new Database(":memory:");
+    const db = openRealDb();
     db.pragma("foreign_keys = ON");
 
     runMigrations(db); // pass 1 — baseline only
@@ -221,7 +214,7 @@ describe("runMigrations upgrade path (real SQLite, real wiring)", () => {
   });
 
   it("is idempotent — a second runMigrations on the upgraded DB is a no-op", () => {
-    const db = new Database(":memory:");
+    const db = openRealDb();
     db.pragma("foreign_keys = ON");
     db.exec("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);");
     db.exec(readFileSync(join(migrationsDir, "001_baseline.sql"), "utf-8"));
@@ -237,20 +230,26 @@ describe("runMigrations upgrade path (real SQLite, real wiring)", () => {
 
   // The head is stated in three places: the constant, the last applier's gate and
   // the migrations directory. Nothing forces them to agree, and for a long time
-  // they did not: docs/MIGRATION.md claimed 13 and 11 while the chain climbed to
+  // they did not: docs/running/migration.md claimed 13 and 11 while the chain climbed to
   // 30. These two assertions are what stop that happening again. They are cheap,
   // they need no database, and they fail on the commit that introduces the drift
   // rather than on the install that trips over it.
   describe("the head constant cannot drift from the chain", () => {
     it("equals the last applier's version gate", () => {
-      expect(MIGRATION_HEAD_SCHEMA_VERSION).toBe(COMPOSER_NODE_CANCELLED_SCHEMA_VERSION);
+      // Amended 2026-09-10 (T-0140): the fallback identity applier is the head.
+      expect(MIGRATION_HEAD_SCHEMA_VERSION).toBe(FALLBACK_IDENTITY_SCHEMA_VERSION);
     });
 
     // schema_version strictly increases and a gate is claimed once, which is
-    // docs/MIGRATION.md's going-forward rule. The head moving by exactly one
+    // docs/running/migration.md's going-forward rule. The head moving by exactly one
     // above the applier that used to hold it is what that rule looks like from
     // the outside, and it catches a new migration that reuses or skips a number.
     it("sits exactly one above the gate it displaced", () => {
+      expect(FALLBACK_IDENTITY_SCHEMA_VERSION).toBe(SCHEDULE_KIND_SCHEMA_VERSION + 1);
+      expect(SCHEDULE_KIND_SCHEMA_VERSION).toBe(RUNS_SPEND_SOURCE_SCHEMA_VERSION + 1);
+      expect(RUNS_SPEND_SOURCE_SCHEMA_VERSION).toBe(MODELS_ORIGIN_SCHEMA_VERSION + 1);
+      expect(MODELS_ORIGIN_SCHEMA_VERSION).toBe(OPERATOR_PREFS_SCHEMA_VERSION + 1);
+      expect(OPERATOR_PREFS_SCHEMA_VERSION).toBe(COMPOSER_NODE_CANCELLED_SCHEMA_VERSION + 1);
       expect(COMPOSER_NODE_CANCELLED_SCHEMA_VERSION).toBe(RESEARCH_GATHER_SCHEMA_VERSION + 1);
       // The rung below, kept so the ladder is checked over three rungs rather
       // than two: a pair of appliers that BOTH moved wrongly could otherwise

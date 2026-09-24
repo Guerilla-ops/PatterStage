@@ -8,12 +8,13 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { now } from "@/lib/db";
-import { logApiError } from "@/lib/api-logger";
-import { messageFromError } from "@/lib/api-fetch";
+import { logApiError } from "@/lib/api/api-logger";
+import { messageFromError } from "@/lib/api/api-fetch";
 import { runDeepResearch, defaultLlm, defaultVisit } from "./engine";
 import { resolveSearchProvider } from "./search";
-import { insertResearchStep, updateResearchRun } from "./research-repository";
-import { captureArtifactOnce } from "@/lib/artifacts-repository";
+import { getResearchRun, insertResearchStep, updateResearchRun } from "./research-repository";
+import { captureArtifactOnce } from "@/lib/runs/artifacts-repository";
+import { recordEvent } from "@/lib/analytics/record-event";
 import type { ResearchConfig } from "./types";
 
 /**
@@ -60,6 +61,19 @@ export function withGatherCaveat(
   );
 }
 
+/**
+ * Thrown by the step hook when the operator cancelled the run mid-flight.
+ *
+ * Not exported: nothing outside this file should be able to fake a cancel, and
+ * the catch below is the only place that reads it.
+ */
+class ResearchCancelled extends Error {}
+
+/** True when the row says the operator stopped this run. */
+function wasCancelled(runId: string): boolean {
+  return getResearchRun(runId)?.status === "cancelled";
+}
+
 export async function runResearchJob(
   runId: string,
   query: string,
@@ -77,6 +91,10 @@ export async function runResearchJob(
       resultsPerQuery: config?.resultsPerQuery,
       visitsPerRound: config?.visitsPerRound,
       onStep: (step) => {
+        // Checked BEFORE the insert: a cancelled run collects no further steps,
+        // and the throw is what actually stops the engine — the row alone would
+        // just be overwritten by the terminal write below (T-0108, D98).
+        if (wasCancelled(runId)) throw new ResearchCancelled();
         insertResearchStep({
           runId,
           position: position++,
@@ -96,6 +114,9 @@ export async function runResearchJob(
     //
     // Zero results is NOT this case: a search that legitimately found nothing
     // still completes, and the report says so.
+    // A run cancelled during the final synthesize fires no further step hook,
+    // so this is the last place left to notice before `completed` is written.
+    if (wasCancelled(runId)) return;
     const searchDown = result.searchAttempts > 0 && result.searchFailures === result.searchAttempts;
     updateResearchRun(runId, {
       status: searchDown ? "failed" : "completed",
@@ -125,6 +146,13 @@ export async function runResearchJob(
         visitFailures: result.visitFailures,
       },
     });
+    // After the terminal row, never before it: a write that throws leaves no
+    // event claiming an outcome the table does not hold (T-0098).
+    recordEvent(searchDown ? "research.failed" : "research.completed", {
+      entityType: "research",
+      entityId: runId,
+      ...(searchDown ? { metadata: { reason: "search-unavailable" } } : {}),
+    });
     // Capture the report as an artifact (idempotent; best-effort — never fail
     // the run on a capture error).
     try {
@@ -141,6 +169,9 @@ export async function runResearchJob(
       logApiError("deep-research.captureArtifact", runId, capErr);
     }
   } catch (err) {
+    // A cancel is not a failure. The row the route wrote is the final word: no
+    // terminal update, no `research.failed`, no artifact from a half-run.
+    if (err instanceof ResearchCancelled) return;
     logApiError("deep-research.runResearchJob", runId, err);
     // No `usage` here, deliberately. The engine threw before it could return a
     // total, so the tokens this run burned are genuinely unknown, and NULL is
@@ -150,5 +181,6 @@ export async function runResearchJob(
       error: messageFromError(err, "research failed"),
       completedAt: now(),
     });
+    recordEvent("research.failed", { entityType: "research", entityId: runId, metadata: { reason: "error" } });
   }
 }

@@ -34,56 +34,23 @@ import { tmpdir } from "os";
 import { join } from "path";
 import * as yaml from "js-yaml";
 
-import { execBaselineSchema } from "../helpers/baseline-db";
+import { openBaselineDb } from "../helpers/baseline-db";
 
 let fakeRoot: string;
 let testDb: import("better-sqlite3").Database | null = null;
 
-jest.mock("@/lib/db", () => {
-  const actualCrypto = jest.requireActual("crypto") as typeof import("crypto");
-  return {
-    getDb: () => testDb!,
-    inTransaction: <T,>(fn: () => T) => testDb!.transaction(fn)(),
-    uuid: () => actualCrypto.randomUUID(),
-    now: () => new Date().toISOString(),
-    ensureDb: () => undefined,
-  };
-});
+jest.mock("@/lib/db", () => require("../helpers/baseline-db").dbSingletonMock(() => testDb));
 
-jest.mock("@/modules/hermes/lib/agent-runtime", () => ({
-  getActiveHermesPaths: () => {
-    const root = (global as { __FAKE_HERMES_ROOT__?: string }).__FAKE_HERMES_ROOT__!;
-    return {
-      root,
-      env: join(root, ".env"),
-      soul: join(root, "SOUL.md"),
-      hermes: join(root, "HERMES.md"),
-      agents: join(root, "AGENTS.md"),
-      skills: join(root, "skills"),
-      profiles: join(root, "profiles"),
-      sessions: join(root, "sessions"),
-      logs: join(root, "logs"),
-      config: join(root, "config.yaml"),
-      backups: join(root, "backups"),
-      cronJobs: join(root, "cron", "jobs.json"),
-      memoryDb: join(root, "memory_store.db"),
-    };
-  },
-  getActiveHermesHome: () => (global as { __FAKE_HERMES_ROOT__?: string }).__FAKE_HERMES_ROOT__,
-}));
+jest.mock("@/modules/hermes/lib/agent-runtime", () => require("../helpers/mocks").agentRuntimeFakeRootMock());
 
 // The only mock that is not about isolating the cache. `PUT /api/config`
 // appends an audit line, and `PATHS.auditLog` resolves from the real data dir
 // rather than the fake Hermes root, so an unmocked call would write into the
 // operator's own audit log from a unit test. The audit line is not part of the
 // invalidation contract; everything that is stays real.
-jest.mock("@/lib/audit-log", () => ({
+jest.mock("@/lib/api/audit-log", () => ({
   appendAuditLine: jest.fn(),
 }));
-
-function loadRealBetterSqlite3(): typeof import("better-sqlite3") {
-  return require("better-sqlite3/lib/index.js") as typeof import("better-sqlite3");
-}
 
 const configPath = () => join(fakeRoot, "config.yaml");
 
@@ -101,12 +68,7 @@ beforeEach(() => {
   fakeRoot = mkdtempSync(join(tmpdir(), "ps-cfg-cache-"));
   (global as { __FAKE_HERMES_ROOT__?: string }).__FAKE_HERMES_ROOT__ = fakeRoot;
 
-  const Database = loadRealBetterSqlite3();
-  testDb = new (Database as unknown as new (path: string) => import("better-sqlite3").Database)(
-    ":memory:",
-  );
-  testDb.pragma("foreign_keys = ON");
-  execBaselineSchema(testDb);
+  testDb = openBaselineDb();
 });
 
 afterEach(() => {
@@ -118,7 +80,7 @@ afterEach(() => {
 describe("the config read cache is a cache, not the source of truth", () => {
   it("warms on first read and serves the warm copy", () => {
     writeFileSync(configPath(), yaml.dump({ agent: { max_turns: 111 } }), "utf-8");
-    const { readCachedConfig } = require("@/lib/config-cache") as typeof import("@/lib/config-cache");
+    const { readCachedConfig } = require("@/lib/config/config-cache") as typeof import("@/lib/config/config-cache");
 
     expect(cachedRowCount()).toBe(0);
     expect((readCachedConfig() as { agent: { max_turns: number } }).agent.max_turns).toBe(111);
@@ -135,10 +97,10 @@ describe("the config read cache is a cache, not the source of truth", () => {
 describe("every writer of config.yaml invalidates the read cache", () => {
   it("syncDefaultsToHermesConfig", () => {
     const { createModel, setDefaultModel } =
-      require("@/lib/models-repository") as typeof import("@/lib/models-repository");
+      require("@/lib/models/models-repository") as typeof import("@/lib/models/models-repository");
     const { syncDefaultsToHermesConfig } =
       require("@/modules/hermes/lib/config-sync") as typeof import("@/modules/hermes/lib/config-sync");
-    const { readCachedConfig } = require("@/lib/config-cache") as typeof import("@/lib/config-cache");
+    const { readCachedConfig } = require("@/lib/config/config-cache") as typeof import("@/lib/config/config-cache");
 
     writeFileSync(configPath(), yaml.dump({ model: { default: "stale/model" } }), "utf-8");
     expect(
@@ -158,10 +120,10 @@ describe("every writer of config.yaml invalidates the read cache", () => {
   });
 
   it("syncSingleModelToHermesConfig", () => {
-    const { createModel } = require("@/lib/models-repository") as typeof import("@/lib/models-repository");
+    const { createModel } = require("@/lib/models/models-repository") as typeof import("@/lib/models/models-repository");
     const { syncSingleModelToHermesConfig } =
       require("@/modules/hermes/lib/config-sync") as typeof import("@/modules/hermes/lib/config-sync");
-    const { readCachedConfig } = require("@/lib/config-cache") as typeof import("@/lib/config-cache");
+    const { readCachedConfig } = require("@/lib/config/config-cache") as typeof import("@/lib/config/config-cache");
 
     writeFileSync(configPath(), yaml.dump({ model: { default: "stale/model" } }), "utf-8");
     readCachedConfig();
@@ -179,7 +141,7 @@ describe("every writer of config.yaml invalidates the read cache", () => {
   it("syncFallbacksToHermesConfig", () => {
     const { syncFallbacksToHermesConfig } =
       require("@/modules/hermes/lib/hermes-fallback-config") as typeof import("@/modules/hermes/lib/hermes-fallback-config");
-    const { readCachedConfig } = require("@/lib/config-cache") as typeof import("@/lib/config-cache");
+    const { readCachedConfig } = require("@/lib/config/config-cache") as typeof import("@/lib/config/config-cache");
 
     writeFileSync(configPath(), yaml.dump({ agent: { api_max_retries: 2 } }), "utf-8");
     readCachedConfig();
@@ -199,10 +161,10 @@ describe("every writer of config.yaml invalidates the read cache", () => {
     // sites WO-0006 enumerated: a writer that writes THROUGH another writer
     // inherits the invalidation without anyone remembering to add it.
     const { createModel, setDefaultModel } =
-      require("@/lib/models-repository") as typeof import("@/lib/models-repository");
+      require("@/lib/models/models-repository") as typeof import("@/lib/models/models-repository");
     const { finalizeRootConfigOnDisk } =
       require("@/modules/hermes/lib/config-sync") as typeof import("@/modules/hermes/lib/config-sync");
-    const { readCachedConfig } = require("@/lib/config-cache") as typeof import("@/lib/config-cache");
+    const { readCachedConfig } = require("@/lib/config/config-cache") as typeof import("@/lib/config/config-cache");
 
     writeFileSync(configPath(), yaml.dump({ model: { default: "stale/model" } }), "utf-8");
     readCachedConfig();
@@ -226,7 +188,7 @@ describe("every writer of config.yaml invalidates the read cache", () => {
     // arrives with the write rather than with the author remembering.
     const { PUT } = require("@/app/api/config/route") as typeof import("@/app/api/config/route");
     const { NextRequest } = require("next/server") as typeof import("next/server");
-    const { readCachedConfig } = require("@/lib/config-cache") as typeof import("@/lib/config-cache");
+    const { readCachedConfig } = require("@/lib/config/config-cache") as typeof import("@/lib/config/config-cache");
 
     writeFileSync(configPath(), yaml.dump({ agent: { max_turns: 100 } }), "utf-8");
     expect((readCachedConfig() as { agent: { max_turns: number } }).agent.max_turns).toBe(100);
@@ -255,7 +217,7 @@ describe("invalidation does not fire for writes that are not config.yaml", () =>
     // live in `hermes-config-write.ts` so the line between them stays visible.
     const { syncCredentialToHermesEnv } =
       require("@/modules/hermes/lib/hermes-env-sync") as typeof import("@/modules/hermes/lib/hermes-env-sync");
-    const { readCachedConfig } = require("@/lib/config-cache") as typeof import("@/lib/config-cache");
+    const { readCachedConfig } = require("@/lib/config/config-cache") as typeof import("@/lib/config/config-cache");
 
     writeFileSync(configPath(), yaml.dump({ agent: { max_turns: 7 } }), "utf-8");
     readCachedConfig();

@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-require-imports */
 /**
  * @jest-environment node
  *
@@ -13,6 +12,7 @@
  * Fix: deleteMission also unlinks the on-disk artifacts
  * (best-effort, ignore missing).
  */
+/* eslint-disable @typescript-eslint/no-require-imports */
 import Database from "better-sqlite3";
 import { mkdtempSync, rmSync, existsSync, writeFileSync } from "fs";
 import { join } from "path";
@@ -55,8 +55,8 @@ beforeEach(() => {
   }
   require("fs").mkdirSync(missionsDir, { recursive: true });
   jest.resetModules();
-  jest.doMock("@/lib/paths", () => {
-    const actual = jest.requireActual("@/lib/paths") as Record<string, unknown>;
+  jest.doMock("@/lib/host/paths", () => {
+    const actual = jest.requireActual("@/lib/host/paths") as Record<string, unknown>;
     return { ...actual, PATHS: { ...(actual.PATHS as object), missions: missionsDir } };
   });
   jest.doMock("@/lib/db", () => {
@@ -72,7 +72,7 @@ beforeEach(() => {
 afterEach(() => {
   jest.restoreAllMocks();
   jest.resetModules();
-  jest.dontMock("@/lib/paths");
+  jest.dontMock("@/lib/host/paths");
   jest.dontMock("@/lib/db");
 });
 

@@ -16,13 +16,13 @@
 import { existsSync } from "fs";
 
 import { finalizeRootConfigOnDisk } from "./config-sync";
-import { messageFromError } from "@/lib/api-fetch";
+import { messageFromError } from "@/lib/api/api-fetch";
 import { buildHermesPathBundle } from "./paths";
 import { getHermesDefaultRoot } from "./profile-paths";
 import {
   getAgentRoot,
   setAgentRootSyncStatus,
-} from "@/lib/agent-root-repository";
+} from "@/lib/agents/agent-root-repository";
 import {
   assembleConfigYamlForProfile,
   getProfile,
@@ -34,7 +34,7 @@ import {
   getSkill,
   listSkills,
   setSkillSyncStatus,
-} from "@/lib/skills-repository";
+} from "@/lib/skills/skills-repository";
 import { ensureDir } from "@/lib/fs/fs-helpers";
 import { now } from "@/lib/db";
 import { detectProfileDrift } from "./profile-drift";
@@ -105,7 +105,15 @@ export function pushRootToHermes(): SyncResult {
     writeWithBackup(bundle.userMemory, row.userMd || "# User\n", backupsDir);
     writeWithBackup(bundle.agentMemory, row.memoryMd || "# Memory\n", backupsDir);
 
-    finalizeRootConfigOnDisk();
+    // A finalize failure is a push that did not finish: the model defaults
+    // were not applied, or the row could not be refreshed from disk. It used
+    // to be discarded here, which made a refusal indistinguishable from
+    // success — the exact silence that let corruption round-trip (T-0086).
+    const finalize = finalizeRootConfigOnDisk();
+    if (finalize.error) {
+      setAgentRootSyncStatus(null, finalize.error);
+      return { success: false, slug: "default", backupPath: backupsDir, error: finalize.error };
+    }
 
     setAgentRootSyncStatus(now(), null);
     return { success: true, slug: "default", backupPath: backupsDir, error: null };

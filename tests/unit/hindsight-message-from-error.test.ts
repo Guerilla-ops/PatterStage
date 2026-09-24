@@ -1,3 +1,4 @@
+/** @jest-environment node */
 /**
  * /api/memory/hindsight/route.ts — regression tests for the
  * `messageFromError` migration in session 128.
@@ -29,9 +30,7 @@
  * handleCount) and the empty-Error trap.
  */
 
-/** @jest-environment node */
-
-import { messageFromError } from "@/lib/api-fetch";
+import { messageFromError } from "@/lib/api/api-fetch";
 
 describe("hindsight messageFromError migration (session 128)", () => {
   describe("GET catch site (fallback = 'Hindsight error')", () => {

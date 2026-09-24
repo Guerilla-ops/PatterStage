@@ -2,8 +2,7 @@
 // useAgentRunStream — run events into one assistant message
 // ═══════════════════════════════════════════════════════════════
 //
-// Split out of useChatPage (Phase 4 god-file decomposition). In "agent"
-// mode the reply arrives as a server-sent event stream on
+// In "agent" mode the reply arrives as a server-sent event stream on
 // /api/runs/[runId]/events: content deltas, reasoning, tool cards and
 // HITL approval requests, ending in one of four terminal events.
 //
@@ -46,7 +45,7 @@ import {
   parseToolEvent,
   mergeToolCall,
   reframeToolsForFailedRun,
-} from "@/lib/chat-utils";
+} from "@/lib/chat/chat-utils";
 import type { PendingApproval } from "@/hooks/chat-local-message";
 
 export interface UseAgentRunStreamArgs {

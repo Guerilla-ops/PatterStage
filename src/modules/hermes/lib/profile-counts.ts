@@ -1,41 +1,46 @@
-// ═══════════════════════════════════════════════════════════════
-// profile-counts.ts: "how much is switched on for this profile?"
-//
-// Split out of profile-sync.ts, where these two sat among the disk
-// operations and read as if they walked the filesystem. They do not.
-// Both answer from the DATABASE, and the distinction matters: the
-// skills count is derived from the denylist (total minus disabled),
-// so a skill present on disk but absent from the catalog does not
-// inflate it, and a profile whose row is missing counts zero rather
-// than falling back to the disk tree.
-//
-// Nothing here writes, and nothing here touches the agent's
-// filesystem, which is why it is not part of the sync family at all.
-// ═══════════════════════════════════════════════════════════════
+// profile-counts.ts: "how much is switched on for this profile?" The toolsets
+// count answers from the database alone; the skills count also reads the agent's
+// skills tree, because the Skills page merges the catalogue with the tree, and
+// counting the catalogue alone described 78 usable skills as 4. Nothing here writes.
 
-import { getAgentRoot } from "@/lib/agent-root-repository";
-import { countSkills } from "@/lib/skills-repository";
 import { getProfile, hydratePlatformToolsetsForSlug } from "./profiles-repository";
 import { unionToolsetsFromPlatforms } from "./toolset-unify";
-import { disabledSkillsFromJson } from "./profile-config-builder";
+import {
+  listCatalogSkillKeys,
+  resolveEffectiveDisabledSkills,
+} from "./effective-disabled-skills";
 
-/** Count enabled skills from DB denylist (not disk tree). */
+/** Count the toolsets this profile enables, unioned across platforms. */
 export function countProfileToolsets(slug: string): number {
   const hydrated = hydratePlatformToolsetsForSlug(slug === "default" ? "default" : slug);
   if (!hydrated) return 0;
   return unionToolsetsFromPlatforms(hydrated.toolsets).length;
 }
 
+/**
+ * How many skills this profile may use: the SAME set the Skills page lists.
+ * This used to subtract the denylist from `countSkills()`, the SQLite catalogue
+ * row count, while GET /api/skills lists the catalogue UNION the agent's tree:
+ * a card read "4 skills" beside a page listing 78, and since disk-only keys join
+ * the denylist too, four toggles pinned it at "0 skills" with 74 still enabled.
+ * Union minus effective denylist agrees by construction; for a batch use `createProfileSkillsCounter`.
+ */
 export function countProfileSkills(slug: string): number {
-  // A COUNT, not a SELECT. GET /api/agent/profiles calls this once per profile,
-  // and the old `listSkills().length` loaded every SKILL.md body from SQLite
-  // each time only to read the array's length off the result.
-  const total = countSkills();
-  if (slug === "default") {
-    const row = getAgentRoot();
-    return Math.max(0, total - disabledSkillsFromJson(row.disabledSkillsJson).length);
-  }
-  const profile = getProfile(slug);
-  if (!profile) return 0;
-  return Math.max(0, total - disabledSkillsFromJson(profile.disabledSkillsJson).length);
+  return createProfileSkillsCounter()(slug);
+}
+
+/** The same count for a batch, holding the catalogue between profiles: it is
+ * profile-INDEPENDENT (`skillsRootForProfile()` takes no argument), so P calls did
+ * P identical walks of one tree. GET /api/agent/profiles and the Agents-page strip
+ * both count here. Not memoised across calls: a toggled skill must move the next read. */
+export function createProfileSkillsCounter(): (slug: string) => number {
+  const catalogKeys = listCatalogSkillKeys();
+
+  return (slug: string): number => {
+    // Ahead of the denylist read: getDisabledSkills answers [] for a missing profile, crediting it everything.
+    if (slug !== "default" && !getProfile(slug)) return 0;
+
+    const disabled = resolveEffectiveDisabledSkills(slug, { catalogKeys });
+    return catalogKeys.filter((key) => !disabled.has(key)).length;
+  };
 }

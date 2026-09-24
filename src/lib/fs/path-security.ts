@@ -2,13 +2,13 @@
 // Path safety — prevent traversal from user-controlled segments
 // ═══════════════════════════════════════════════════════════════
 
-import { relative, resolve } from "path";
+import { isAbsolute, relative, resolve, sep } from "path";
 import { homedir } from "os";
 import { NextResponse } from "next/server";
 
-import { PS_DATA_DIR } from "@/lib/paths";
+import { PS_DATA_DIR } from "@/lib/host/paths";
 import { getAgentWorkspace } from "@/lib/runtime/workspace";
-import { badRequest } from "@/lib/api-response";
+import { badRequest } from "@/lib/api/api-response";
 
 const PROFILE_PATTERN = /^\.[a-zA-Z0-9][a-zA-Z0-9_-]{0,126}$|^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/;
 
@@ -20,7 +20,12 @@ function isPathUnderRoot(absolutePath: string, root: string): boolean {
   const C = resolve(absolutePath);
   if (C === R) return true;
   const rel = relative(R, C);
-  return rel !== "" && !rel.startsWith("..") && !rel.includes("..");
+  // A path, not a substring. `!rel.includes("..")` refused real directories:
+  // a..b, ..foo, notes..old. What matters is whether the FIRST segment climbs
+  // out, which is what a leading ".." or a ".." followed by the separator says,
+  // and whether relative() gave up and returned an absolute path, which it does
+  // when the two paths share no root (another drive on Windows).
+  return rel !== "" && rel !== ".." && !rel.startsWith(".." + sep) && !isAbsolute(rel);
 }
 
 /**
@@ -76,11 +81,7 @@ export function resolveSafeProfileName(
 
 /**
  * Resolve a profile id (or null → "default") and return a 400 NextResponse
- * if it is invalid. The "validation-returns-Response-or-T" pattern from the
- * `requireMissionId` / `getMissionOrNotFound` helpers in
- * `src/app/api/missions/route.ts` (session 42). Centralises the 8 inline
- * `if (!prof.ok) { return badRequest(prof.error); }` copies that the
- * `agent/profiles/*` and `agent/personality` routes used to repeat.
+ * if it is invalid.
  *
  * Callers check `if (prof instanceof NextResponse) return prof;` to
  * short-circuit. Success type is `{ profile: string }` — the consumer reads

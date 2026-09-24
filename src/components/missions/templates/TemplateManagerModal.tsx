@@ -1,13 +1,15 @@
 // ═══════════════════════════════════════════════════════════════
 // TemplateManagerModal — the "Edit Templates" manager (grouped list +
-// per-row two-step delete). Extracted verbatim from TemplateModals.tsx.
+// per-row two-step delete).
 // ═══════════════════════════════════════════════════════════════
 
 "use client";
 
 import { Edit3, Layers, Plus, Trash2 } from "lucide-react";
 import Button from "@/components/ui/Button";
+import Card from "@/components/ui/Card";
 import CategoryAccordion from "@/components/ui/CategoryAccordion";
+import IconButton from "@/components/ui/IconButton";
 import Modal from "@/components/ui/Modal";
 import { useTwoStepConfirm } from "@/hooks/useTwoStepConfirm";
 import {
@@ -32,8 +34,7 @@ interface TemplateManagerModalProps {
 // Each row has its own `useTwoStepConfirm({ autoDismissMs: 4000 })` instance
 // so a stale "armed" state from one row cannot fire when the user later
 // clicks a different row's delete button. By the time onDelete runs, the
-// user has already confirmed in the leaf. Sister to the per-row confirms in
-// MissionEditorPanel + PerRowDeleteButton.
+// user has already confirmed in the leaf.
 function TemplateRow({
   template,
   onEdit,
@@ -53,40 +54,32 @@ function TemplateRow({
     void deleteConfirm.confirm(() => onDelete(template.id));
   };
   return (
-    <div
-      className="flex items-center justify-between p-2.5 rounded-lg border border-white/5 bg-dark-800/30 hover:border-white/10 transition-colors group"
+    <Card
+      variant="raised"
+      padding="none"
+      className="flex items-center justify-between p-2.5 group"
     >
       <div className="flex items-center gap-2.5 min-w-0 flex-1">
-        <div className="text-sm text-ps-text-primary truncate">{template.name}</div>
+        <div className="text-body text-ps-text-primary truncate">{template.name}</div>
         {!template.isCustom && (
-          <span className="text-xs font-mono text-ps-text-faint flex-shrink-0">
+          <span className="text-micro font-mono text-ps-text-faint flex-shrink-0">
             built-in
           </span>
         )}
       </div>
       {template.isCustom && (
         <div className="flex items-center gap-1 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-          <button
-            onClick={() => onEdit(template)}
-            className="p-1.5 rounded text-ps-text-muted hover:text-neon-cyan hover:bg-cyan-500/10 transition-colors"
-            title="Edit"
-          >
-            <Edit3 className="w-3.5 h-3.5" />
-          </button>
-          <button
+          <IconButton icon={Edit3} label="Edit" size="sm" onClick={() => onEdit(template)} />
+          <IconButton
+            icon={Trash2}
+            label={isArmed ? "Click again to confirm" : "Delete"}
+            size="sm"
+            variant={isArmed ? "danger" : "ghost"}
             onClick={handleDeleteClick}
-            className={`p-1.5 rounded transition-colors ${
-              isArmed
-                ? "text-neon-red bg-neon-red/15 ring-1 ring-neon-red/40"
-                : "text-ps-text-muted hover:text-red-400 hover:bg-red-500/10"
-            }`}
-            title={isArmed ? "Click again to confirm" : "Delete"}
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-          </button>
+          />
         </div>
       )}
-    </div>
+    </Card>
   );
 }
 
@@ -126,7 +119,7 @@ export function TemplateManagerModal({
       <div className="space-y-2">
         {isEmpty && (
           <div className="py-8 text-center space-y-3">
-            <p className="text-xs font-mono text-ps-text-muted">
+            <p className="text-micro font-mono text-ps-text-muted">
               No templates to show. Built-in templates load from the server —
               if this stays empty, check the browser console and restart Control
               Hub after <code className="text-neon-cyan">npm run db:migrate</code>.

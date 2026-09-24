@@ -1,159 +1,84 @@
 // ═══════════════════════════════════════════════════════════════
 // useHindsightModels — mental-models tab state + CRUD handlers.
-// Extracted verbatim from HindsightBrowser. Self-gates its load effect
-// on activeTab === "mental-models".
+// The list, the two modals and the delete are the shared tab shape
+// (useHindsightCrudTab); the refresh is this tab's own.
 // ═══════════════════════════════════════════════════════════════
 
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState } from "react";
 import type { ToastType } from "@/components/ui/Toast";
-import { loadHindsightList } from "@/lib/memory/hindsight-client";
-import { hindsightMutate } from "@/lib/memory/hindsight-mutate";
 import { parseOptionalTagsInput, parseTagsInput } from "@/lib/memory/hindsight-tag-input";
-import { runMutation } from "@/lib/run-mutation";
+import { runWrite } from "@/lib/api/api-write";
+import { useHindsightCrudTab, type HindsightCrudConfig } from "./useHindsightCrudTab";
 import type { Tab, MentalModel } from "./types";
 
 const EMPTY_MODEL_FORM = { name: "", query: "", tags: "" };
 type ModelForm = typeof EMPTY_MODEL_FORM;
 
+const MODELS_TAB: HindsightCrudConfig<MentalModel, ModelForm> = {
+  tab: "mental-models",
+  listKey: "models",
+  deleteType: "model",
+  noun: { title: "Mental model", lower: "mental model" },
+  createdMessage: "Mental model created (generating in background)",
+  emptyForm: EMPTY_MODEL_FORM,
+  readyToCreate: (f) => Boolean(f.name.trim() && f.query.trim()),
+  readyToSave: (f) => Boolean(f.name.trim()),
+  createBody: (f) => ({
+    action: "create-model",
+    name: f.name,
+    query: f.query,
+    tags: parseOptionalTagsInput(f.tags),
+  }),
+  updateBody: (id, f) => ({
+    action: "update-model",
+    id,
+    name: f.name,
+    query: f.query || undefined,
+    tags: parseTagsInput(f.tags),
+  }),
+  formOf: (m) => ({ name: m.name, query: m.source_query, tags: m.tags.join(", ") }),
+};
+
 type ShowToast = (message: string, type?: ToastType) => void;
 
 export function useHindsightModels(showToast: ShowToast, activeTab: Tab) {
-  const [mentalModels, setMentalModels] = useState<MentalModel[]>([]);
-  const [loadingModels, setLoadingModels] = useState(false);
-  const [showModelModal, setShowModelModal] = useState(false);
-  const [modelForm, setModelForm] = useState<ModelForm>(EMPTY_MODEL_FORM);
-  const [creatingModel, setCreatingModel] = useState(false);
-  const [editingModel, setEditingModel] = useState<MentalModel | null>(null);
-  const [editModelForm, setEditModelForm] = useState<ModelForm>(EMPTY_MODEL_FORM);
-  const [savingModel, setSavingModel] = useState(false);
+  const models = useHindsightCrudTab<MentalModel, ModelForm>(showToast, activeTab, MODELS_TAB);
   const [refreshingModelId, setRefreshingModelId] = useState<string | null>(null);
 
-  const loadModels = useCallback(async () => {
-    // Sister to `loadDirectives` — same `loadHindsightList` helper, just
-    // with the `mental-models` action + `models` key.
-    await loadHindsightList<MentalModel>(
-      "mental-models",
-      setLoadingModels,
-      "models",
-      setMentalModels,
-      showToast,
-    );
-  }, [showToast]);
-
-  useEffect(() => {
-    if (activeTab === "mental-models") void loadModels();
-  }, [activeTab, loadModels]);
-
-  const openModelModal = useCallback(
-    () => setShowModelModal(true),
-    [setShowModelModal],
-  );
-  const closeModelModal = useCallback(() => {
-    setShowModelModal(false);
-    setModelForm(EMPTY_MODEL_FORM);
-  }, [setShowModelModal]);
-  const closeEditModel = useCallback(
-    () => setEditingModel(null),
-    [setEditingModel],
-  );
-
-  const handleCreateModel = () =>
-    runMutation(showToast, {
-      isValid: () => modelForm.name.trim().length > 0 && modelForm.query.trim().length > 0,
-      busy: setCreatingModel,
-      build: () => ({
-        action: "create-model",
-        name: modelForm.name,
-        query: modelForm.query,
-        tags: parseOptionalTagsInput(modelForm.tags),
-      }),
-      path: "/api/memory/hindsight",
-      successMsg: "Mental model created (generating in background)",
-      errorMsg: "Failed to create mental model",
-      onSuccess: async () => {
-        closeModelModal();
-        await loadModels();
-      },
-    });
-
   const handleRefreshModel = async (id: string) => {
-    setRefreshingModelId(id);
-    const result = await hindsightMutate(
+    await runWrite({
+      setBusy: (busy) => setRefreshingModelId(busy ? id : null),
       showToast,
-      "POST",
-      { action: "refresh-model", id },
-      "Mental model refresh started",
-      "Failed to refresh mental model",
-    );
-    if (!result.ok) {
-      setRefreshingModelId(null);
-      return;
-    }
-    await loadModels();
-    setRefreshingModelId(null);
-  };
-
-  const handleDeleteModel = async (id: string) => {
-    const result = await hindsightMutate(
-      showToast,
-      "DELETE",
-      { type: "model", id },
-      "Mental model deleted",
-      "Failed to delete mental model",
-    );
-    if (!result.ok) return;
-    setMentalModels(prev => prev.filter(m => m.id !== id));
-  };
-
-  const openEditModel = (m: MentalModel) => {
-    setEditingModel(m);
-    setEditModelForm({ name: m.name, query: m.source_query, tags: m.tags.join(", ") });
-  };
-
-  const handleSaveModel = () => {
-    if (!editingModel) return false;
-    return runMutation(showToast, {
-      isValid: () => editModelForm.name.trim().length > 0,
-      busy: setSavingModel,
-      build: () => ({
-        action: "update-model",
-        id: editingModel.id,
-        name: editModelForm.name,
-        query: editModelForm.query || undefined,
-        tags: parseTagsInput(editModelForm.tags),
-      }),
-      path: "/api/memory/hindsight",
-      successMsg: "Mental model updated",
-      errorMsg: "Failed to update mental model",
-      onSuccess: async () => {
-        setEditingModel(null);
-        await loadModels();
-      },
+      url: "/api/memory/hindsight",
+      body: { action: "refresh-model", id },
+      successMessage: "Mental model refresh started",
+      errorMessage: "Failed to refresh mental model",
+      onSuccess: models.load,
     });
   };
 
   return {
-    mentalModels,
-    loadingModels,
-    showModelModal,
-    modelForm,
-    setModelForm,
-    creatingModel,
-    editingModel,
-    editModelForm,
-    setEditModelForm,
-    savingModel,
+    mentalModels: models.items,
+    loadingModels: models.loading,
+    showModelModal: models.showModal,
+    modelForm: models.form,
+    setModelForm: models.setForm,
+    creatingModel: models.creating,
+    editingModel: models.editing,
+    editModelForm: models.editForm,
+    setEditModelForm: models.setEditForm,
+    savingModel: models.saving,
     refreshingModelId,
-    loadModels,
-    openModelModal,
-    closeModelModal,
-    closeEditModel,
-    openEditModel,
-    handleCreateModel,
+    loadModels: models.load,
+    openModelModal: models.openModal,
+    closeModelModal: models.closeModal,
+    closeEditModel: models.closeEdit,
+    openEditModel: models.openEdit,
+    handleCreateModel: models.handleCreate,
     handleRefreshModel,
-    handleDeleteModel,
-    handleSaveModel,
+    handleDeleteModel: models.handleDelete,
+    handleSaveModel: models.handleSave,
   };
 }

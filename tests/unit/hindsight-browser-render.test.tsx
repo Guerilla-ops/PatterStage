@@ -6,24 +6,9 @@
 
 import "@testing-library/jest-dom";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { jsonResponse } from "../helpers/fetch-map";
 
 import HindsightBrowser from "@/components/memory/HindsightBrowser";
-
-interface MinimalResponse {
-  ok: boolean;
-  status: number;
-  json: () => Promise<unknown>;
-  text: () => Promise<string>;
-}
-
-function jsonResponse(body: unknown, status = 200): MinimalResponse {
-  return {
-    ok: status >= 200 && status < 300,
-    status,
-    json: async () => body,
-    text: async () => JSON.stringify(body),
-  };
-}
 
 const originalFetch = global.fetch;
 
@@ -95,7 +80,7 @@ describe("HindsightBrowser", () => {
     const threeMinAgo = new Date(Date.now() - 3 * 60 * 1000).toISOString();
     // The modern Hindsight HTTP server returns plain JSON objects
     // (not Python `repr()` strings). The `mapMemoryItem` bridge
-    // produces `{ id, content, type, tags, created_at, score }` and
+    // produces `{ id, content, type, tags, created_at, proofCount }` and
     // the MemoryTab reads those fields directly — see
     // `tests/unit/memory-tab-render.test.tsx` for the underlying
     // render contract. This test verifies the end-to-end
@@ -111,7 +96,7 @@ describe("HindsightBrowser", () => {
           type: "observation",
           tags: ["org:acme", "team:eng"],
           created_at: threeMinAgo,
-          score: 2,
+          proofCount: 2,
         },
         {
           id: "m2",
@@ -119,7 +104,7 @@ describe("HindsightBrowser", () => {
           type: "world",
           tags: [],
           created_at: threeMinAgo,
-          score: 0.5,
+          proofCount: 5,
         },
       ],
     });
@@ -139,8 +124,11 @@ describe("HindsightBrowser", () => {
     expect(screen.getByText("org:acme")).toBeInTheDocument();
     expect(screen.getByText("team:eng")).toBeInTheDocument();
 
-    expect(screen.getByText(/Proof count: 2/)).toBeInTheDocument();
-    expect(screen.getByText(/Relevance: 50%/)).toBeInTheDocument();
+    // Amended for T-0101 (D63): the second row used to carry 0.5 and render
+    // "Relevance: 50%", a similarity figure the bridge has never produced. A
+    // proof count is a count, and it is the only thing this line says.
+    expect(screen.getByText("Proof count: 2")).toBeInTheDocument();
+    expect(screen.getByText("Proof count: 5")).toBeInTheDocument();
 
     const times = screen.getAllByText(/3m ago/);
     expect(times.length).toBeGreaterThanOrEqual(1);

@@ -55,7 +55,7 @@ jest.mock("@/lib/sessions/session-repository", () => ({
 
 const mockGetLatestRunForMission = jest.fn(() => null as unknown);
 const mockUpdateRun = jest.fn();
-jest.mock("@/lib/runs-repository", () => ({
+jest.mock("@/lib/runs/runs-repository", () => ({
   getLatestRunForMission: (...a: unknown[]) => mockGetLatestRunForMission(...(a as [])),
   updateRun: (...a: unknown[]) => mockUpdateRun(...a),
 }));
@@ -67,9 +67,9 @@ jest.mock("@/lib/orchestration", () => ({
 }));
 
 const mockAppendAuditLine = jest.fn();
-jest.mock("@/lib/audit-log", () => ({ appendAuditLine: (...a: unknown[]) => mockAppendAuditLine(...a) }));
-jest.mock("@/lib/api-logger", () => ({ logApiError: jest.fn() }));
-jest.mock("@/lib/schedules-repository", () => ({ createSchedule: jest.fn(() => ({ id: "s1" })) }));
+jest.mock("@/lib/api/audit-log", () => ({ appendAuditLine: (...a: unknown[]) => mockAppendAuditLine(...a) }));
+jest.mock("@/lib/api/api-logger", () => ({ logApiError: jest.fn() }));
+jest.mock("@/lib/schedule/schedules-repository", () => ({ createSchedule: jest.fn(() => ({ id: "s1" })) }));
 const mockDispatchMissionNow = jest.fn().mockResolvedValue({ ok: true });
 jest.mock("@/lib/missions/mission-dispatch", () => ({
   dispatchMissionNow: (...a: unknown[]) => mockDispatchMissionNow(...a),
@@ -150,9 +150,10 @@ describe("a cancelled mission does not read as a failure", () => {
     // The run view is optional -- a mission that failed before it was ever
     // dispatched has none -- so reading run.status unguarded would crash the board.
     expect(describeMissionRunState(missionState({ run: null }), NOW).label).toBe("Failed");
+    // "Completed", not "Finished": decision 13's one vocabulary (B2, T-0096).
     expect(
       describeMissionRunState(missionState({ status: "successful", run: null }), NOW).label,
-    ).toBe("Finished");
+    ).toBe("Completed");
   });
 
   it("GREEN CONTROL: a successful run is not relabelled by this", () => {
@@ -161,7 +162,7 @@ describe("a cancelled mission does not read as a failure", () => {
         missionState({ status: "successful", run: runView({ status: "completed", error: null }) }),
         NOW,
       ).label,
-    ).toBe("Finished");
+    ).toBe("Completed");
   });
 });
 
@@ -449,7 +450,7 @@ describe("a degraded gather is recorded, and the report says so", () => {
     // it displaced, and matches the highest file on disk. This asserts the only
     // thing that is this migration's business — its own number.
     const { RESEARCH_GATHER_SCHEMA_VERSION } = await import(
-      "@/lib/db/apply-research-gather-migration"
+      "@/lib/db/sql-migrations"
     );
     expect(RESEARCH_GATHER_SCHEMA_VERSION).toBe(36);
   });

@@ -1,10 +1,13 @@
 ---
+title: Security
 summary: How to report a vulnerability in PatterStage privately, and what to include
+section: running
+nav: 90
+audience: operator
 type: policy
 tags: [security]
 compiled_from: normalised
 ---
-
 # Security
 
 Found something that could let an attacker run code, steal keys, or trash someone's install? **Tell me privately first.**, pretty please! 
@@ -52,12 +55,13 @@ Every request is checked in **one place**, `src/proxy.ts`, before any route hand
 
 PatterStage is a single-operator control plane, so authentication is one shared secret rather than an account system:
 
-- A random token is minted on first boot into **`PS_DATA_DIR/auth-token`** (mode `0600`) and the full sign-in URL is printed to the server log at every start.
+- A random token is minted on first boot into **`PS_DATA_DIR/auth-token`** (mode `0600`) and the full sign-in URL is printed to the server log at every start. On Unix, boot also narrows `PS_DATA_DIR` itself to `0700` and the database to `0600`, so another local account cannot read them; on Windows this is a no-op and the directory's ACL governs.
 - **Browser:** open `http://127.0.0.1:<PORT>/?ps_token=<token>` once. The proxy exchanges it for an httpOnly `ps_session` cookie and redirects to strip the token from the URL and history.
 - **Scripts / curl:** send `Authorization: Bearer <token>`.
 - Cookie-authenticated writes must be **same-origin** (`Sec-Fetch-Site` / `Origin`), so a page you visit in another tab cannot drive your control plane.
 - `PS_READ_ONLY=1` rejects unsafe **methods**. Reads keep working.
 - `/api/health` is the only unauthenticated route. It returns `{"ok":true}` and nothing about your system; the deploy runner and container health checks use it.
+- **Framing is refused everywhere.** Every response that has a body (pages, API answers, the sign-in refusal, 404s) carries `X-Frame-Options: DENY` and `Content-Security-Policy: frame-ancestors 'none'`, so no other page can put PatterStage in a frame. (The 307s from the old pre-1.0 URLs do not carry them, which costs nothing: a redirect has no body to frame, and the page it lands on refuses.) This matters because `SameSite=Lax` is decided by site, not by port: a page served on another port of the same host would otherwise be same-site, receive your session cookie inside the frame, and be able to trick clicks on the deploy, script and credential controls. If you want PatterStage on a dashboard, link to it rather than embed it.
 
 > **Treat the token as root on the host.** It grants mission dispatch and agent access, and the agent's toolset includes terminal access.
 
@@ -67,7 +71,7 @@ PatterStage is a single-operator control plane, so authentication is one shared 
 |-----|--------|
 | `PS_AUTH_TOKEN` | Supply the token directly (containers). Wins over the token file. |
 | `PS_AUTH_TOKEN_FILE` | Move the token file off the default `PS_DATA_DIR/auth-token`. |
-| `PS_AUTH_MODE=none` | **Disable authentication entirely.** Only correct when something in front of PatterStage already authenticates. Logged loudly at boot, and endpoints that write host-executed content (the script editor, crontab installs) refuse to run in this mode. |
+| `PS_AUTH_MODE=none` | **Disable authentication entirely.** Only correct when something in front of PatterStage already authenticates. Logged loudly at boot, and the endpoints that reach the host (the script editor, running a script, crontab installs, the deploy actions) refuse with 403 in this mode, from a list in `src/proxy.ts` and again in each route. |
 
 Rotate by deleting the token file and restarting; the new token is picked up without a rebuild.
 

@@ -14,32 +14,28 @@
 import { NextResponse } from "next/server";
 
 import { ensureSyncLayer } from "@/lib/sync";
-import { getSystemStat } from "@/lib/system-repository";
-import { countSkills } from "@/lib/skills-repository";
+import { getSystemStat } from "@/lib/system/system-repository";
+import { countSkills } from "@/lib/skills/skills-repository";
 import { listSessions } from "@/lib/sessions/session-repository";
-import { serverErrorFromCatch } from "@/lib/api-logger";
+import { route } from "@/lib/api/api-route";
 
-export async function GET() {
-  try {
-    ensureSyncLayer();
+export const GET = route("GET /api/status", "reading system status", "Failed to read system status", async () => {
+  ensureSyncLayer();
 
-    const soulPresent = getSystemStat("config.soul_present") === "true";
-    const configPresent = getSystemStat("config.present") === "true";
-    const skillsCount = countSkills();
-    const sessionsTotal = listSessions({ limit: 0 }).total;
-    const memoryDbSize = getSystemStat("memory.db_size") ?? "N/A";
+  const soulPresent = getSystemStat("config.soul_present") === "true";
+  const configPresent = getSystemStat("config.present") === "true";
+  const skillsCount = countSkills();
+  const sessionsTotal = listSessions({ limit: 0 }).total;
+  const memoryDbSize = getSystemStat("memory.db_size") ?? "N/A";
 
-    return NextResponse.json({
-      data: {
-        soulFile: soulPresent,
-        configFile: configPresent,
-        skillsCount,
-        sessionsCount: sessionsTotal,
-        memorySize: memoryDbSize,
-        timestamp: new Date().toISOString(),
-      },
-    });
-  } catch (error) {
-    return serverErrorFromCatch("GET /api/status", "reading system status", error, "Failed to read system status");
-  }
-}
+  return NextResponse.json({
+    data: {
+      soulFile: soulPresent,
+      configFile: configPresent,
+      skillsCount,
+      sessionsCount: sessionsTotal,
+      memorySize: memoryDbSize,
+      timestamp: new Date().toISOString(),
+    },
+  });
+});

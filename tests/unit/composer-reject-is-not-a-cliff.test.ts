@@ -33,23 +33,14 @@
 // places, and written nowhere. `rejected` must not become the second one.
 
 import { join } from "path";
-import { execBaselineSchema } from "../helpers/baseline-db";
+import { openBaselineDb } from "../helpers/baseline-db";
 import { applyComposerMigration } from "@/lib/db/apply-composer-migration";
 import { applyComposerGroupLinkMigration } from "@/lib/db/apply-composer-group-link-migration";
 import { applyComposerRejectedMigration } from "@/lib/db/apply-composer-rejected-migration";
 
 let testDb: import("better-sqlite3").Database | null = null;
 
-jest.mock("@/lib/db", () => {
-  const actualCrypto = jest.requireActual("crypto") as typeof import("crypto");
-  return {
-    getDb: () => testDb!,
-    inTransaction: <T,>(fn: () => T) => testDb!.transaction(fn)(),
-    uuid: () => actualCrypto.randomUUID(),
-    now: () => new Date().toISOString(),
-    ensureDb: () => undefined,
-  };
-});
+jest.mock("@/lib/db", () => require("../helpers/baseline-db").dbSingletonMock(() => testDb));
 jest.mock("@/lib/runtime", () => ({
   runtime: {
     submitRun: jest.fn(async () => ({ runId: "b1", status: "started" })),
@@ -95,14 +86,10 @@ const DEAD_END_GATE = {
 };
 
 beforeEach(() => {
-  const Database = require("better-sqlite3/lib/index.js") as typeof import("better-sqlite3");
-  testDb = new (Database as unknown as new (p: string) => import("better-sqlite3").Database)(
-    ":memory:",
-  );
-  testDb.pragma("foreign_keys = ON");
-  execBaselineSchema(testDb);
-  applyComposerMigration(testDb, migrationsDir);
-  applyComposerGroupLinkMigration(testDb, migrationsDir);
+  testDb = openBaselineDb([
+    applyComposerMigration,
+    applyComposerGroupLinkMigration,
+  ]);
   // The migration under test. Without it every `rejected` write below throws a
   // CHECK violation, which is the point: the status has to be admitted by the
   // schema before it can be written.
@@ -137,14 +124,10 @@ function runParkedAtGate(): { runId: string; nodeRunId: string; nodeId: string }
 
 /** A composer-capable database at v26, i.e. everything 035 expects to find. */
 function freshComposerDbAtV34(): import("better-sqlite3").Database {
-  const Database = require("better-sqlite3/lib/index.js") as typeof import("better-sqlite3");
-  const db = new (Database as unknown as new (p: string) => import("better-sqlite3").Database)(
-    ":memory:",
-  );
-  db.pragma("foreign_keys = ON");
-  execBaselineSchema(db);
-  applyComposerMigration(db, migrationsDir);
-  applyComposerGroupLinkMigration(db, migrationsDir);
+  const db = openBaselineDb([
+    applyComposerMigration,
+    applyComposerGroupLinkMigration,
+  ]);
   return db;
 }
 
@@ -439,14 +422,16 @@ describe("the UI shows the refusal instead of swallowing it", () => {
     // canvas, and the behaviour that matters here (a 400 becomes visible text)
     // is asserted end-to-end by the route tests above plus this wiring check.
     const page = require("fs").readFileSync(
-      join(process.cwd(), "src", "app", "orchestration", "composer", "page.tsx"),
+      join(process.cwd(), "src", "app", "work", "composer", "page.tsx"),
       "utf-8",
     ) as string;
     const fn = page.slice(page.indexOf("async function decideGate"));
     const body = fn.slice(0, fn.indexOf("\n  }"));
-    expect(body).toMatch(/res\.ok|result\.ok|\.ok\b/);
-    expect(body).toMatch(/setGateError/);
-    // …and the state it sets has to actually render.
-    expect(page).toMatch(/gateError\s*\?/);
+    // Since C6 (T-0143) the write goes through runWrite, which checks the
+    // envelope and says the refusal in the server's words as a toast.
+    expect(body).toMatch(/runWrite/);
+    expect(body).toMatch(/errorMessage/);
+    // …and the toast it says has to actually render.
+    expect(page).toMatch(/\{toastElement\}/);
   });
 });

@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-require-imports */
 /**
  * @jest-environment node
  *
@@ -7,24 +6,18 @@
  * one query per row on a 15-second poll, which is how a board with fifty
  * missions turns a freshness feature into a load problem.
  */
+/* eslint-disable @typescript-eslint/no-require-imports */
 import type Database from "better-sqlite3";
-import { join } from "path";
 
-import { execBaselineSchema } from "../helpers/baseline-db";
+import { openBaselineDb } from "../helpers/baseline-db";
 import { applyRunsSchedulesMigration } from "@/lib/db/apply-runs-schedules-migration";
 import { applyComposerMigration } from "@/lib/db/apply-composer-migration";
 
 let testDb: Database.Database | null = null;
 
-jest.mock("@/lib/db", () => ({
-  getDb: () => testDb!,
-  inTransaction: <T,>(fn: () => T) => fn(),
-  uuid: () => "uuid",
-  now: () => new Date().toISOString(),
-  ensureDb: () => undefined,
-}));
+jest.mock("@/lib/db", () => require("../helpers/baseline-db").dbSingletonMock(() => testDb, { uuid: () => "uuid" }));
 
-import { createRun, listLatestRunsForMissions, updateRun } from "@/lib/runs-repository";
+import { createRun, listLatestRunsForMissions, updateRun } from "@/lib/runs/runs-repository";
 
 function seedMission(id: string): void {
   testDb!
@@ -41,17 +34,11 @@ function stampSubmittedAt(runId: string, iso: string): void {
 }
 
 beforeEach(() => {
-  const RealDatabase = require("better-sqlite3/lib/index.js") as typeof import("better-sqlite3");
-  testDb = new (RealDatabase as unknown as new (path: string) => Database.Database)(":memory:");
-  testDb.pragma("foreign_keys = ON");
-  execBaselineSchema(testDb);
   // The runs table is post-baseline; apply it with the real applier rather
   // than a hand-written fixture, so this test cannot pass against a schema no
-  // running install has.
-  const migrationsDir = join(process.cwd(), "src", "lib", "db", "migrations");
-  applyRunsSchedulesMigration(testDb, migrationsDir);
-  // runs.composer_node_run_id is added at v21 and written by createRun.
-  applyComposerMigration(testDb, migrationsDir);
+  // running install has. runs.composer_node_run_id arrives at v21 and is
+  // written by createRun, so that applier comes too.
+  testDb = openBaselineDb([applyRunsSchedulesMigration, applyComposerMigration]);
 });
 
 afterEach(() => {

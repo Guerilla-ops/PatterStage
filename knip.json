@@ -6,8 +6,7 @@
     "mock-hermes/server.mjs",
     "mock-hindsight/server.mjs",
     "mock-llm/server.mjs",
-    "tests/integration/runtime/*.mjs",
-    "tests/**/*.test.{ts,tsx}"
+    "tests/integration/runtime/*.mjs"
   ],
   "project": [
     "src/**/*.{ts,tsx}",
@@ -19,7 +18,8 @@
   "ignoreDependencies": [
     "ts-jest",
     "tailwindcss",
-    "@jest/globals"
+    "@jest/globals",
+    "jsdom"
   ],
   "ignoreBinaries": [
     "python",

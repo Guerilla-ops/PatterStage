@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Copy } from "lucide-react";
+import Card from "@/components/ui/Card";
+import SegmentedControl from "@/components/ui/SegmentedControl";
 import {
   buildMissionPrompt,
   buildMissionPromptHuman,
@@ -43,6 +45,11 @@ function buildOptions(props: MissionPromptPreviewProps) {
   };
 }
 
+const MODES: ReadonlyArray<{ value: PromptPreviewMode; label: string }> = [
+  { value: "human", label: "Human" },
+  { value: "ai", label: "AI" },
+];
+
 export default function MissionPromptPreview(props: MissionPromptPreviewProps) {
   const [mode, setMode] = useState<PromptPreviewMode>("human");
   const [copied, setCopied] = useState(false);
@@ -77,34 +84,16 @@ export default function MissionPromptPreview(props: MissionPromptPreviewProps) {
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="inline-flex rounded-lg border border-white/10 p-0.5 bg-dark-950/80">
-          <button
-            type="button"
-            onClick={() => setMode("human")}
-            className={`px-3 py-1.5 text-xs font-mono rounded-md transition-colors ${
-              mode === "human"
-                ? "bg-white/10 text-white"
-                : "text-ps-text-muted hover:text-ps-text-secondary"
-            }`}
-          >
-            Human
-          </button>
-          <button
-            type="button"
-            onClick={() => setMode("ai")}
-            className={`px-3 py-1.5 text-xs font-mono rounded-md transition-colors ${
-              mode === "ai"
-                ? "bg-white/10 text-white"
-                : "text-ps-text-muted hover:text-ps-text-secondary"
-            }`}
-          >
-            AI
-          </button>
-        </div>
+        <SegmentedControl<PromptPreviewMode>
+          label="Preview mode"
+          options={MODES}
+          value={mode}
+          onChange={setMode}
+        />
         <button
           type="button"
           onClick={() => void handleCopy()}
-          className="flex items-center gap-1 text-xs font-mono text-neon-cyan hover:text-neon-cyan/80"
+          className="flex items-center gap-1 text-micro font-mono text-neon-cyan hover:text-neon-cyan/80"
         >
           <Copy className="w-3 h-3" />
           {copied
@@ -114,15 +103,17 @@ export default function MissionPromptPreview(props: MissionPromptPreviewProps) {
               : "Copy agent prompt"}
         </button>
       </div>
-      <p className="text-xs font-mono text-ps-text-faint leading-relaxed">
+      <p className="text-micro font-mono text-ps-text-faint leading-relaxed">
         Profile personality (SOUL/AGENTS) comes from Hermes at ~/.hermes.{" "}
         {mode === "human"
           ? "Human view mirrors your form fields."
           : "AI view is the XML prompt stored and sent to the agent."}
       </p>
-      <pre className="rounded-lg border border-white/10 bg-dark-950/50 px-3 py-3 text-xs font-mono text-ps-text-secondary whitespace-pre-wrap max-h-72 overflow-y-auto">
-        {activePreview || "(empty)"}
-      </pre>
+      <Card variant="raised" padding="none" className="max-h-72 overflow-y-auto">
+        <pre className="px-3 py-3 text-micro font-mono text-ps-text-secondary whitespace-pre-wrap">
+          {activePreview || "(empty)"}
+        </pre>
+      </Card>
     </div>
   );
 }

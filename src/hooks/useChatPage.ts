@@ -29,7 +29,7 @@
 import { useEffect } from "react";
 
 import { useToast } from "@/components/ui/Toast";
-import { COPY_BTN_CLASS, COPY_BTN_DATA_ATTR } from "@/lib/chat-utils";
+import { COPY_BTN_CLASS, COPY_BTN_DATA_ATTR } from "@/lib/chat/chat-utils";
 import { bannerStatesFor } from "@/components/chat/gateway-banner-states";
 import { useGatewayHealth } from "@/hooks/useGatewayHealth";
 import { useChatInput } from "@/hooks/useChatInput";
@@ -48,7 +48,7 @@ export function useChatPage() {
     online: gatewayOnline,
     authConfigured: gatewayAuthConfigured,
     baseUrl: gatewayUrl,
-    agentDefaultModelSet,
+    modelReadiness,
     registryModelIds,
     modelLabels,
     modelsError,
@@ -57,7 +57,6 @@ export function useChatPage() {
 
   const conversations = useChatConversations({
     closeStream: transcript.closeStream,
-    messages: transcript.messages,
     setMessages: transcript.setMessages,
     setIsStreaming: transcript.setIsStreaming,
     setPendingApproval: transcript.setPendingApproval,
@@ -140,20 +139,30 @@ export function useChatPage() {
     handleNewChat: conversations.handleNewChat,
     handleDeleteConversation: conversations.handleDeleteConversation,
     handleDownloadConversation: conversations.handleDownloadConversation,
+    conversationsError: conversations.listError,
+    reloadConversations: conversations.loadConversations,
+    // The other half of the read contract: the LIST failing and the selected
+    // conversation's TRANSCRIPT failing are two different pieces of news, and
+    // the page renders each one where its own content would have gone.
+    conversationError: send.conversationError,
+    reloadActiveConversation: send.reloadActiveConversation,
     // gateway banners
     //
-    // The page renders `bannerStates`; the three raw fields stay exported
-    // because other consumers (the send guard, the model dropdown) read them
-    // directly. Which banners show is one rule in one place -- see
+    // The page renders `bannerStates`; the two raw gateway fields stay
+    // exported because other consumers (the send guard, the model dropdown)
+    // read them directly. Which banners show is one rule in one place -- see
     // gateway-banner-states.ts.
     gatewayOnline,
     gatewayAuthConfigured,
-    agentDefaultModelSet,
     gatewayUrl,
+    // The sentence the banner says about THIS install, straight from the one
+    // readiness answer. The page does not compose it and does not second-guess
+    // it.
+    modelDetail: modelReadiness?.detail ?? null,
     bannerStates: bannerStatesFor({
       gatewayOnline,
       gatewayAuthConfigured,
-      agentDefaultModelSet,
+      modelReady: modelReadiness ? modelReadiness.ready : null,
       hasActiveConversation: conversations.hasActiveConversation,
       messageCount: transcript.messages.length,
     }),
@@ -168,6 +177,7 @@ export function useChatPage() {
     setInput: composer.setInput,
     handleKeyDown: send.handleKeyDown,
     handleSend: send.handleSend,
+    handleRetry: send.handleRetry,
     handleStop: send.handleStop,
   };
 }

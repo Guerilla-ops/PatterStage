@@ -28,29 +28,12 @@
  * reconciler looks the run up, finds nothing, and moves on forever.
  */
 
-import { join } from "path";
-
-import type DatabaseNs from "better-sqlite3";
-
-type RealDb = DatabaseNs.Database;
+import { openRealDb, type RealDb } from "../helpers/baseline-db";
 
 let testDb: RealDb | null = null;
 
-jest.mock("@/lib/db", () => ({
-  getDb: () => testDb!,
-  ensureDb: () => undefined,
-  uuid: () => `id-${Math.random().toString(36).slice(2)}`,
-  now: () => new Date().toISOString(),
-  inTransaction: <T,>(fn: () => T) => testDb!.transaction(fn)(),
-}));
-
-// `better-sqlite3` is itself mapped to a stub in jest.config.js, so importing it
-// normally here yields a no-op driver that silently swallows every write. The
-// repository tests in this repo all reach past the mapper for the real driver;
-// this one has to as well, or the assertions run against nothing.
-const Database = jest.requireActual(
-  join(process.cwd(), "node_modules", "better-sqlite3", "lib", "index.js"),
-) as unknown as new (path: string) => RealDb;
+// eslint-disable-next-line @typescript-eslint/no-require-imports -- jest.mock factories are hoisted above imports; require is the hoisting-safe form
+jest.mock("@/lib/db", () => require("../helpers/baseline-db").dbSingletonMock(() => testDb));
 
 import {
   createConversation,
@@ -58,11 +41,11 @@ import {
   failStuckChatMessages,
   getMessage,
   getMessages,
-} from "@/lib/chat-repository";
+} from "@/lib/chat/chat-repository";
 
 /** Minimal schema: the two chat tables plus the runs table the sweep consults. */
 beforeAll(() => {
-  testDb = new Database(":memory:");
+  testDb = openRealDb();
   testDb.exec(`
     CREATE TABLE chat_conversations (
       id TEXT PRIMARY KEY,

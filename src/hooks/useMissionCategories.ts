@@ -1,44 +1,25 @@
+"use client";
+
 import { useCallback, useState } from "react";
-import { toastError, setErrorFromCaught } from "@/lib/api-fetch";
+import { setErrorFromCaught } from "@/lib/api/api-fetch";
+import { runWrite } from "@/lib/api/api-write";
 import type { ManagedCategory } from "@/components/missions/CategoryManagerModal";
-import type { useMissionsApi } from "@/hooks/useMissionsApi";
 
 type ToastFn = (message: string, type?: "success" | "error" | "info") => void;
 
-/**
- * The category CRUD slice of {@link useMissionsApi}. Picking from the real
- * return type keeps the two in lockstep — a signature change there is a compile
- * error here rather than a silent drift.
- */
-type CategoryApi = Pick<
-  ReturnType<typeof useMissionsApi>,
-  "fetchCategories" | "createCategory" | "updateCategory" | "deleteCategory"
->;
-
-export interface UseMissionCategoriesOptions extends CategoryApi {
+export interface UseMissionCategoriesOptions {
+  fetchCategories: () => Promise<ManagedCategory[]>;
   showToast: ToastFn;
-  /**
-   * Reload the missions + templates slices after a delete. A category delete
-   * reassigns its missions to the fallback category, so those slices are stale
-   * once the delete lands. Kept as an injected callback (rather than reaching
-   * back into the list slice) so this hook stays a self-contained leaf with no
-   * cyclic dependency on the composing hook.
-   */
   onMissionsReassigned: () => Promise<unknown>;
 }
 
 /**
- * Category-management concern extracted from `useMissionsPage`: the category
- * catalog (`categories`), its load-error banner state, the manager-modal
- * visibility, and the load/create/update/delete handlers. The form's *selected*
- * `newCategoryId` deliberately stays in the compose layer — this hook owns the
- * catalog and its CRUD, not the per-mission selection.
+ * The mission categories: the catalogue, the manager modal, and the three
+ * writes. A write says what happened and reloads the catalogue; a delete
+ * also reloads the missions and templates it may have reassigned.
  */
 export function useMissionCategories({
   fetchCategories,
-  createCategory,
-  updateCategory,
-  deleteCategory,
   showToast,
   onMissionsReassigned,
 }: UseMissionCategoriesOptions) {
@@ -54,9 +35,8 @@ export function useMissionCategories({
       setCategories(list);
       setCategoriesLoadError(null);
     } catch (error) {
-      // Surface to both the inline error banner the page renders and the toast.
-      // `setErrorFromCaught` returns the resolved message so the dual dispatch
-      // (state + toast) resolves the string once.
+      // One message for the banner and the toast: the banner stays, the toast
+      // says it happened.
       const msg = setErrorFromCaught(
         setCategoriesLoadError,
         error,
@@ -68,38 +48,54 @@ export function useMissionCategories({
 
   const handleCreateCategory = useCallback(
     async (name: string, color?: string): Promise<string | null> => {
-      try {
-        const cat = await createCategory(name, color);
-        if (cat?.id) {
-          await loadCategories();
-          showToast(`Category "${name}" created`, "success");
-          return cat.id;
-        }
-        showToast("Could not create category", "error");
-      } catch (error) {
-        toastError(showToast, error, "Failed to create category");
-      }
-      return null;
+      const res = await runWrite<{ data?: { category?: { id: string } } }>({
+        showToast,
+        url: "/api/mission-categories",
+        body: { name, color },
+        successMessage: `Category "${name}" created`,
+        errorMessage: "Failed to create category",
+        onSuccess: loadCategories,
+      });
+      return res?.data?.category?.id ?? null;
     },
-    [createCategory, loadCategories, showToast],
+    [loadCategories, showToast],
   );
 
   const handleUpdateCategory = useCallback(
-    async (id: string, patch: { name?: string; color?: string }) => {
-      await updateCategory(id, patch);
-      await loadCategories();
+    async (id: string, patch: { name?: string; color?: string }): Promise<boolean> => {
+      const res = await runWrite({
+        showToast,
+        url: "/api/mission-categories",
+        method: "PUT",
+        body: { id, ...patch },
+        successMessage: "Category updated",
+        errorMessage: "Failed to update category",
+        onSuccess: loadCategories,
+      });
+      return res !== undefined;
     },
-    [updateCategory, loadCategories],
+    [loadCategories, showToast],
   );
 
   const handleDeleteCategory = useCallback(
-    async (id: string, reassignToId: string | null) => {
-      await deleteCategory(id, reassignToId);
-      // Refresh all three affected slices in parallel: the category catalog
-      // (own) plus the missions/templates the delete may have reassigned.
-      await Promise.allSettled([loadCategories(), onMissionsReassigned()]);
+    async (id: string, reassignToId: string | null): Promise<boolean> => {
+      // Always sent, so an explicit Uncategorized reaches the route's null branch.
+      const params = new URLSearchParams({ id, reassignToId: reassignToId ?? "" });
+      const res = await runWrite({
+        showToast,
+        url: `/api/mission-categories?${params.toString()}`,
+        method: "DELETE",
+        successMessage: "Category deleted",
+        errorMessage: "Failed to delete category",
+        // The catalogue, and the missions and templates the delete may have
+        // moved, in parallel.
+        onSuccess: async () => {
+          await Promise.allSettled([loadCategories(), onMissionsReassigned()]);
+        },
+      });
+      return res !== undefined;
     },
-    [deleteCategory, loadCategories, onMissionsReassigned],
+    [loadCategories, onMissionsReassigned, showToast],
   );
 
   const openCategoryManager = useCallback(() => setShowCategoryManager(true), []);

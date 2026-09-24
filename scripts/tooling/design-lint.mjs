@@ -48,6 +48,79 @@ import { fileURLToPath } from "url";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const BASELINE_PATH = join(ROOT, "scripts", "tooling", "design-lint.baseline.json");
+const GLOBALS_CSS = join(ROOT, "src", "app", "globals.css");
+
+// ── Declared colour tokens ──────────────────────────────────────────────────
+//
+// Tailwind generates nothing for a class it cannot resolve, and says nothing.
+// `text-neon-red` compiled to no rule at all for as long as no token declared
+// it, and thirteen sites, the global error fallback among them, rendered with
+// no colour (T-0095, D114). The rule below reads the @theme block once and
+// fails the build on the next house colour class without a token behind it.
+
+/** Every `--color-<name>` declared in a stylesheet, aliases included. */
+export function declaredColourTokens(css) {
+  const out = new Set();
+  for (const m of css.matchAll(/--color-([a-z0-9-]+)\s*:/g)) out.add(m[1]);
+  return out;
+}
+
+/**
+ * Every `--shadow-<name>` declared in a stylesheet.
+ *
+ * `shadow-ps-raised` is a house class too, and it names a SHADOW token, not a
+ * colour: the rule below read it as `ps-raised` with no `--color-` behind it
+ * and refused the first dialog to use the elevation U6 declared for dialogs
+ * (T-0125). A shadow utility is checked against the shadow tokens.
+ */
+export function declaredShadowTokens(css) {
+  const out = new Set();
+  for (const m of css.matchAll(/--shadow-([a-z0-9-]+)\s*:/g)) out.add(m[1]);
+  return out;
+}
+
+/**
+ * A house colour class: a colour utility carrying a `neon-`, `semantic-` or
+ * `ps-` token, with any variant prefix before it and any opacity after it.
+ * Tailwind's own palette (`text-red-400`, `bg-white/5`) is not a house token
+ * and is not this rule's business.
+ */
+const HOUSE_COLOUR_CLASS =
+  /(?:^|[^\w-])(?:text|bg|border(?:-[trblxyse])?|ring(?:-offset)?|shadow|from|via|to|fill|stroke|outline|decoration|accent|divide|placeholder|caret)-((?:neon|semantic|ps)-[a-z0-9]+(?:-[a-z0-9]+)*)(?:\/\d{1,3})?(?![\w-])/g;
+
+/**
+ * The house tokens named on a line that `declared` does not contain, in order.
+ * A `shadow-` utility is held to `shadows` instead, when given.
+ */
+export function undeclaredColourClasses(line, declared, shadows = new Set()) {
+  const out = [];
+  for (const m of line.matchAll(HOUSE_COLOUR_CLASS)) {
+    const isShadow = /(?:^|[^\w-])shadow-/.test(m[0]);
+    const known = isShadow ? shadows.has(m[1]) : declared.has(m[1]);
+    if (!known && !out.includes(m[1])) out.push(m[1]);
+  }
+  return out;
+}
+
+let declaredCache = null;
+function declaredTokens() {
+  if (!declaredCache) {
+    declaredCache = existsSync(GLOBALS_CSS)
+      ? declaredColourTokens(readFileSync(GLOBALS_CSS, "utf-8"))
+      : new Set();
+  }
+  return declaredCache;
+}
+
+let shadowCache = null;
+function declaredShadows() {
+  if (!shadowCache) {
+    shadowCache = existsSync(GLOBALS_CSS)
+      ? declaredShadowTokens(readFileSync(GLOBALS_CSS, "utf-8"))
+      : new Set();
+  }
+  return shadowCache;
+}
 
 const SCAN_DIRS = ["src", "docs"];
 const SCAN_EXTS = new Set([".ts", ".tsx", ".css", ".md"]);
@@ -58,7 +131,49 @@ const PRAGMA = /design-lint-disable-next-line\s+([\w-]+)\s+--\s+\S/;
 
 const rel = (p) => relative(ROOT, p).split(sep).join("/");
 
-const RULES = [
+export const RULES = [
+  {
+    id: "no-native-confirm",
+    law: "A destructive click is two clicks on a ConfirmButton (src/components/ui/ConfirmButton.tsx): arm, then act, disarming on its own. The native window.confirm blocks the thread with an OS dialog the product cannot style, and it is the pattern five sites still used beside eleven that did not (T-0096, D51).",
+    files: (f) => f.startsWith("src/") && (f.endsWith(".ts") || f.endsWith(".tsx")),
+    // Not `.confirm(`: the two-step hook's own method is called that way.
+    pattern: /(?<![\w.$])(?:window\.|globalThis\.)?confirm\(/,
+  },
+  {
+    id: "no-bare-outline-none",
+    law: "outline-none removes the one focus ring the console has (globals.css :focus-visible). A control may remove it only on a line that puts a focus ring, border or outline back (T-0096, D117).",
+    files: (f) => f.startsWith("src/") && (f.endsWith(".ts") || f.endsWith(".tsx")),
+    // `focus:outline-none` is itself an outline-none, not a ring put back.
+    //
+    // And neither is a BORDER. The rule used to accept `focus:border-*` as the
+    // replacement, so 55 controls removed the console's one indicator and put
+    // a 1px colour change in its place: it fires on :focus rather than
+    // :focus-visible, so a mouse click draws it, and 47 of the 56 measured in
+    // T-0120 were below the 3:1 WCAG 1.4.11 asks of it. `bg` and `text` go for
+    // the same reason. What still counts is a ring: an outline, a ring, or a
+    // shadow standing in for one (T-0122).
+    test: (line) =>
+      /\boutline-none\b/.test(line) &&
+      !/focus(?:-visible|-within)?:(?:ring|shadow|outline-(?!none))/.test(line),
+  },
+  {
+    id: "overlay-uses-dialog-a11y",
+    law: "A file that paints a `fixed inset-0` overlay must call useDialogA11y (role, aria-modal, Escape, the Tab trap, focus restored to the trigger, scroll lock). Modal and Sheet already do; twelve bespoke overlays did not, and a keyboard user could not close them (T-0096, D116).",
+    files: (f) => f.startsWith("src/") && f.endsWith(".tsx"),
+    // File-level: reported at the first overlay line when nothing in the
+    // file calls the hook.
+    fileTest: (lines) => {
+      const at = lines.findIndex((l) => /\bfixed inset-0\b/.test(l));
+      if (at < 0) return null;
+      return lines.some((l) => /useDialogA11y\(/.test(l)) ? null : at;
+    },
+  },
+  {
+    id: "token-must-exist",
+    law: "A house colour class (text-, bg-, border-, ring- and friends carrying a neon-, semantic- or ps- token) must name a token declared in src/app/globals.css @theme. Tailwind generates nothing for an unknown class and says nothing, so the element renders with no colour (T-0095, D114).",
+    files: (f) => f.startsWith("src/") && (f.endsWith(".ts") || f.endsWith(".tsx")),
+    test: (line) => undeclaredColourClasses(line, declaredTokens(), declaredShadows()).length > 0,
+  },
   {
     id: "no-ch-custom-properties",
     law: "The shell/effect custom properties are --ps-*. There are no --ch-* variables; writing one produces CSS that silently does nothing.",
@@ -73,20 +188,66 @@ const RULES = [
     // (`agent-card-${id}.json`) is not mistaken for a class. The second branch
     // catches an opacity modifier applied to an interpolated class, which fails
     // the same way: `${iconColorMap[c]}/60`.
+    // Four shapes, because there are four ways to build a class Tailwind
+    // cannot see, and the two added at T-0120 are the two that were live:
+    // StatPill edited a class with `.replace(/^text-/, "border-") + "/20"`,
+    // and ModelsSectionHeader concatenated `/60` onto an interpolated class by
+    // putting two interpolations next to each other. Both rendered only
+    // because the class name they assembled happened to be written down
+    // somewhere else Tailwind was also scanning - a document for one, a unit
+    // test for the other.
+    //
+    // The last branch is deliberately narrowed to a className: `${a}${b}` is
+    // how every URL and every message in this codebase is built.
     pattern:
-      /\b(?:text|bg|border|ring|shadow|from|via|to|fill|stroke|outline|decoration|accent|divide|placeholder)-\$\{|\$\{[^}]+\}\/\d+/,
+      /\b(?:text|bg|border|ring|shadow|from|via|to|fill|stroke|outline|decoration|accent|divide|placeholder)-\$\{|\$\{[^}]+\}\/\d+|\.replace\([^)]*["'/](?:text|bg|border|ring|shadow|from|via|to|fill|stroke|outline|decoration|accent|divide|placeholder)-|className=[^\n]*\$\{[^}]+\}\$\{[^}]+\}/,
+  },
+  {
+    id: "no-dangling-variant",
+    law: "A Tailwind variant prefix with no utility after it (`focus:`) is a class that can never exist. Inert, so nothing fails - and evidence that something removed half of a class.",
+    files: (f) => f.startsWith("src/") && (f.endsWith(".ts") || f.endsWith(".tsx")),
+    // Eleven of these were left by T-0122's focus pass, which deleted
+    // `outline-none` with a \b anchor. `:` is a word boundary, so it matched
+    // inside `focus:outline-none` and left the prefix standing.
+    //
+    // Three narrowings, all load-bearing. The variants are SPELLED OUT rather
+    // than matched as [a-z-]+, because prose ends in a colon too ("error:") and
+    // so does a pseudo-selector in a plain string. It is anchored on the QUOTE
+    // that closes the string rather than on whitespace, because a ternary
+    // (`cond ? "x" : "y"`) puts a colon before a space and is not a class. And
+    // the prefix must FOLLOW another class: skills-config.ts writes
+    // `"  disabled:"` as a YAML key and `startsWith("disabled:")` as a parser,
+    // and a rule without that lookbehind would have deleted both.
+    pattern:
+      /(?<=[\w\]/%.-]) (?:(?:focus-visible|focus-within|focus|hover|active|disabled|visited|checked|group-hover|group-focus|peer-focus|peer-checked|first|last|odd|even|placeholder|motion-safe|motion-reduce|dark|print|sm|md|lg|xl|2xl):)+(?=["'`])/,
   },
   {
     id: "no-raw-colour-in-tsx",
-    law: "Colour comes from a token, never a literal. Design tokens are in globals.css @theme + src/lib/theme.ts (docs/design-tokens.md).",
+    law: "Colour comes from a token, never a literal. Design tokens are in globals.css @theme + src/lib/ui/theme.ts (docs/contributing/design-tokens.md).",
     files: (f) => f.startsWith("src/") && f.endsWith(".tsx"),
-    pattern: /#[0-9a-fA-F]{3,8}\b|\brgba?\(\s*\d/,
+    // The lookbehind, not \b, and it excludes letters and digits but NOT the
+    // underscore. Tailwind writes a space as `_` inside an arbitrary value, so
+    // the character before `rgba(` in `shadow-[0_0_8px_rgba(6,214,214,0.3)]` is
+    // a word character and \b never matched: the rule reported "0 in 0 files"
+    // while two raw colours shipped (T-0114). Excluding `.` and `$` as well
+    // keeps `palette.rgba(1,2,3)`, a method call, out of it, which the old
+    // anchor did flag. Requiring a DIGIT after the paren is what leaves
+    // `rgb(var(--ps-rgb-neon-cyan) / 0.3)` alone: that is a token reference,
+    // four live call sites use it, and the built stylesheet proves it compiles.
+    pattern: /#[0-9a-fA-F]{3,8}\b|(?<![A-Za-z0-9.$])rgba?\(\s*\d/,
   },
   {
     id: "no-sub-12px-type",
-    law: "Type below 12px fails legibility for a dense operator surface and is unreadable at arm's length. Use the type scale.",
+    law: "Type below 12px fails legibility for a dense operator surface and is unreadable at arm's length. Use the type scale. An SVG chart sets its size as a prop, so fontSize={n} counts too.",
     files: (f) => f.startsWith("src/"),
-    pattern: /text-\[(?:[0-9]|1[01])(?:\.\d+)?px\]/,
+    // The second alternative is the SVG half. An axis label is text, it reads
+    // through --color-ps-text-*, and the class rule could never see it because
+    // a chart writes `fontSize={8}`, not a class. Three chart sites rendered at
+    // 8px and 9px, two thirds of the floor this rule exists to hold (T-0114).
+    // A computed size (`fontSize={size * 0.06}`) is out of scope for a regex
+    // and is left to the rendered census.
+    pattern:
+      /text-\[(?:[0-9]|1[01])(?:\.\d+)?px\]|\bfontSize=(?:\{(?:[0-9]|1[01])(?:\.\d+)?\}|"(?:[0-9]|1[01])(?:\.\d+)?")/,
   },
   {
     id: "hermes-outside-adapter",
@@ -204,6 +365,176 @@ const RULES = [
     pattern: /—/,
     codeOnly: false,
   },
+  // ══════════════════════════════════════════════════════════════════════════
+  // The token layer's rules (U2, T-0116).
+  //
+  // Each of these lands at TODAY'S count, not at zero. That is what the ratchet
+  // is for: the number may fall and never rise, so the codemod batches can take
+  // them down while the gate refuses anything new on the way. A rule at zero
+  // that nobody can satisfy for six batches gets disabled; a rule at its real
+  // count is a debt with a direction.
+  // ══════════════════════════════════════════════════════════════════════════
+  {
+    id: "no-raw-border-alpha",
+    law: "A rule is a token: --color-ps-edge for a control boundary or a shell seam, --color-ps-edge-hairline for a card outline or a rule inside a surface, --color-ps-edge-emphasis for selected or armed. The tree draws 435 rules across eight undeclared white alphas, none of which reaches 1.8:1 and all of which are below the 3:1 WCAG 1.4.11 asks of a component boundary.",
+    files: (f) => f.startsWith("src/") && f.endsWith(".tsx"),
+    pattern: /(?:^|[^\w-])(?:border(?:-[trblxyse])?|divide|ring|outline|bg)-white\/\d{1,3}(?![\w-])/,
+  },
+  {
+    id: "no-raw-text-alpha",
+    law: "Text hierarchy is the four --color-ps-text-* tiers, which are derived from the painted ground and gated by contrast-check. Spelling it as a raw white opacity is how 2,377 elements once failed AA; 157 sites still do it, and 23 of them are below the 50% floor the file says has no tier beneath it.",
+    files: (f) => f.startsWith("src/") && f.endsWith(".tsx"),
+    pattern: /(?:^|[^\w-])(?:text|placeholder|caret|decoration)-white(?:\/\d{1,3})?(?![\w-])/,
+  },
+  {
+    id: "palette-must-be-house",
+    law: "Tailwind's own palette is not this product's palette. 353 sites in 56 files paint red-400, green-500 and 23 other ramp colours directly, and the collisions are exact: text-red-400 IS --color-semantic-danger, spelled two ways. Use a house token or the status ladder.",
+    files: (f) => f.startsWith("src/") && f.endsWith(".tsx"),
+    pattern:
+      /(?:^|[^\w-])(?:text|bg|border(?:-[trblxyse])?|ring(?:-offset)?|shadow|from|via|to|fill|stroke|outline|decoration|accent|divide|placeholder|caret)-(?:slate|gray|grey|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-\d{2,3}(?:\/\d{1,3})?(?![\w-])/,
+  },
+  {
+    id: "type-scale-only",
+    law: "Five steps: text-micro 12/16, text-body 14/21, text-lead 16/24, text-title 20/28, text-display 28/34. Tailwind's default scale was used as if it had two, with text-xs 919 times and text-sm 241 against 36 uses of everything larger, and 70% of every character rendered is 12px.",
+    files: (f) => f.startsWith("src/") && f.endsWith(".tsx"),
+    pattern:
+      /(?:^|[^\w-])text-(?:xs|sm|base|lg|xl|2xl|3xl|4xl|5xl|6xl|7xl|8xl|9xl)(?![\w-])/,
+  },
+  {
+    id: "radius-scale-only",
+    law: "Three radii: rounded-ps-sm 4 for a chip, rounded-ps-md 8 for a control, rounded-ps-lg 12 for a surface, plus rounded-full. Seven render today from eleven spellings, and adjacent cards on the same screen have 8px and 12px corners.",
+    files: (f) => f.startsWith("src/") && f.endsWith(".tsx"),
+    pattern:
+      /(?:^|[^\w-])rounded(?:-[trblse]{1,2})?-(?:none|sm|md|lg|xl|2xl|3xl|\[[^\]]+\])(?![\w-])/,
+  },
+  {
+    id: "z-scale-only",
+    law: "Seven named layers: base, sticky, dropdown, overlay, modal, toast, tooltip. Thirteen z values are in use and seven are arbitrary; z-[61] exists because someone needed to sit on z-[60], which is how a modal ends up under a toast.",
+    files: (f) => f.startsWith("src/") && f.endsWith(".tsx"),
+    pattern: /(?:^|[^\w-])z-(?:\[[^\]]+\]|\d+)(?![\w-])/,
+  },
+  {
+    id: "no-inline-card-chrome",
+    law: "A card is <Surface>. 113 files spell its chrome inline instead, and the measured result is 108 distinct card chromes across 23 screens: the same intent at dark-900/40 and dark-900/50 accounts for 102 surfaces where nobody made a choice.",
+    files: (f) =>
+      f.startsWith("src/") && f.endsWith(".tsx") && !f.startsWith("src/components/ui/"),
+    // All three on one line: a corner, an edge and a fill is a card, wherever
+    // the author put the words.
+    test: (line) =>
+      /(?:^|[^\w-])rounded(?:-|\b)/.test(line) &&
+      /(?:^|[^\w-])border(?:-|\s|")/.test(line) &&
+      /(?:^|[^\w-])bg-/.test(line),
+  },
+  {
+    id: "no-raw-control-outside-ui",
+    law: "A control is a primitive. 321 raw <button> elements live in 113 files against 104 uses of the shared Button, which is why 20 distinct button heights render; 110 of them carry no type= and default to submit inside a form.",
+    files: (f) =>
+      f.startsWith("src/") &&
+      f.endsWith(".tsx") &&
+      !f.startsWith("src/components/ui/") &&
+      !f.startsWith("src/kit/"),
+    // `|$` because a tag can end its line. The lookahead exists to keep
+    // `<buttonBar>` and `<inputGroup>` out, and the four characters it allowed
+    // were a space, a slash and a bracket, so `<button` written at the end of
+    // its line matched nothing. The rule reported zero while the tree held 104
+    // in 43 files (components-01, ruled 2026-09-12). The lookahead is widened
+    // rather than dropped: dropping it would find the hundred and four AND
+    // every `<buttonBar` with them.
+    pattern: /<(?:button|input|select|textarea)(?=[\s/>]|$)/,
+  },
+  {
+    id: "one-container-per-page",
+    law: "The shell owns the measure. A page that centres its own column is how 21 of 23 screens end up with their h1 on a different left edge from their content, by as much as 289px, across eight content widths.",
+    files: (f) => f.startsWith("src/app/") && f.endsWith("page.tsx"),
+    // The page's OWN scale: 4xl (56rem) and up, a viewport width, or a house
+    // measure other than the prose one. Deliberately not every cap. Holding a
+    // paragraph to a reading measure is something the programme asks for, and
+    // centring a 12px icon in an empty state is not a layout decision at all;
+    // a rule that banned those would be making the product worse to satisfy a
+    // rule about something else. What a page may not own is a CONTAINER.
+    pattern: /(?:^|[^\w-])max-w-(?:4xl|5xl|6xl|7xl|screen-[\w-]+|ps-(?!prose\b)[\w-]+)\b/,
+  },
+  {
+    id: "no-raw-colour-in-css",
+    law: "globals.css paints three colours no token declares, including a second cyan (#22d3ee) for the product's own live-pathway signature, next to elements painted in the brand cyan. Declare it or use the one that exists.",
+    files: (f) => f === "src/app/globals.css",
+    // Inside the declaration blocks a literal IS the token; everywhere else it
+    // is a colour nobody can retheme. The line test is the cheap approximation:
+    // a raw colour on a line that is not a custom-property declaration.
+    // A declaration's NAME may carry digits: --color-cherenkov-100 and
+    // --color-dark-950 both do, and `[a-z-]+` matched neither, so the rule
+    // reported its own token block as raw colour. Comments are skipped for the
+    // same reason: the paragraph explaining why an accent was brightened is
+    // prose about a hex, not a use of one.
+    test: (line) =>
+      !/^\s*--[a-z0-9-]+:/.test(line) &&
+      !/^\s*(?:\/\*|\*|\/\/)/.test(line) &&
+      /#[0-9a-fA-F]{3,8}\b|(?<![A-Za-z0-9.$])rgba?\(\s*\d/.test(line),
+  },
+  {
+    id: "no-raw-fetch-in-component",
+    law: "A component reads the API through useApiResource, which is cached, deduped, and keyed on the endpoint so two readers are one request. A read inside a useEffect (safeApiCall, safeApiCallData or apiFetch with no method, so a GET) is the pattern that fetched on every mount and poll with no cache in front of it; the dashboard issued 22 requests on load that way, four endpoints twice (T-0129). A read in a click handler is on demand and is not this.",
+    files: (f) =>
+      (f.startsWith("src/components/") || f.startsWith("src/app/") || f.startsWith("src/modules/")) &&
+      !f.startsWith("src/app/api/") &&
+      f.endsWith(".tsx"),
+    fileTest: (lines) => {
+      const text = lines.join("\n");
+      const re = /\buseEffect\s*\(/g;
+      let m;
+      while ((m = re.exec(text)) !== null) {
+        let depth = 0;
+        let end = -1;
+        for (let i = m.index + m[0].length - 1; i < text.length; i++) {
+          if (text[i] === "(") depth += 1;
+          else if (text[i] === ")" && --depth === 0) {
+            end = i;
+            break;
+          }
+        }
+        if (end === -1) continue;
+        const body = text.slice(m.index, end);
+        const calls = body.match(/\b(safeApiCall|safeApiCallData|apiFetch)\s*[<(][^\n]*\n(?:[^\n]*\n){0,7}/g) ?? [];
+        for (const call of calls) {
+          if (/\bmethod\s*:/.test(call)) continue;
+          return text.slice(0, text.indexOf(call)).split("\n").length - 1;
+        }
+      }
+      return null;
+    },
+  },
+  {
+    id: "no-raw-write-outside-the-helper",
+    law: "A screen writes to the API through runWrite (src/lib/api/api-write.ts), which marks busy, calls, says what happened in the server's words, reloads and clears busy in one place; a hook that owns query keys writes through react-query's useMutation and invalidates them. A fetch call carrying a method anywhere else says those six things a fifth way, and four ways had to be folded into one (T-0138). A read, a call with no method, is the other rule's.",
+    files: (f) =>
+      (f.startsWith("src/components/") || f.startsWith("src/app/") || f.startsWith("src/modules/") || f.startsWith("src/hooks/")) &&
+      !f.startsWith("src/app/api/") &&
+      f !== "src/hooks/useApiResource.ts" &&
+      (f.endsWith(".ts") || f.endsWith(".tsx")),
+    fileTest: (lines) => {
+      const text = lines.join("\n");
+      const spanEnd = (from) => {
+        let depth = 0;
+        for (let i = from; i < text.length; i++) {
+          if (text[i] === "(") depth += 1;
+          else if (text[i] === ")" && --depth === 0) return i;
+        }
+        return text.length;
+      };
+      const sanctioned = [];
+      for (const m of text.matchAll(/\b(?:runWrite|useMutation)\s*(?:<[^(]*>)?\(/g)) {
+        const open = m.index + m[0].length - 1;
+        sanctioned.push([open, spanEnd(open)]);
+      }
+      for (const m of text.matchAll(/\b(?:apiFetch|safeApiCall|safeApiCallData)\s*(?:<[^(]*>)?\(/g)) {
+        const open = m.index + m[0].length - 1;
+        if (!/\bmethod\s*:/.test(text.slice(open, spanEnd(open)))) continue;
+        if (sanctioned.some(([a, b]) => open > a && open < b)) continue;
+        return text.slice(0, open).split("\n").length - 1;
+      }
+      return null;
+    },
+  },
 ];
 
 // ── Scan ────────────────────────────────────────────────────────────────────
@@ -227,6 +558,94 @@ function walk(dir, out = []) {
  *
  * @returns {{ found: Map<string, {line:number,text:string}[]>, counts: Record<string, number> }}
  */
+/**
+ * Which lines sit inside a block comment.
+ *
+ * The per-line skip below recognises a comment by its leading marker, which is
+ * the house style in .ts and .tsx and is not CSS: a `/* … *\/` block's interior
+ * lines carry no marker at all. globals.css documents the surface ladder as a
+ * table of hexes inside one, and every row of it read as a raw colour (T-0118).
+ *
+ * A line counts as comment when it STARTED inside one and contributed no code
+ * of its own, so `foo: red; /* note *\/` is still code and the closing line of
+ * a block is still comment.
+ */
+export function blockCommentLines(lines) {
+  const inside = new Array(lines.length).fill(false);
+  let open = false;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const startedInside = open;
+    let code = false;
+    for (let j = 0; j < line.length; j++) {
+      if (!open && line.startsWith("/*", j)) {
+        open = true;
+        j += 1;
+      } else if (open && line.startsWith("*/", j)) {
+        open = false;
+        j += 1;
+      } else if (!open && !/\s/.test(line[j])) {
+        code = true;
+      }
+    }
+    inside[i] = startedInside && !code;
+  }
+  return inside;
+}
+
+/**
+ * Every violation in one file's lines, keyed `rule::path`.
+ *
+ * Split out of scanTree so a test can plant a line and prove the scan SEES
+ * it: the B1 mutation sweep found that a scan which silently skipped the
+ * predicate rule still passed "the rule lands at a zero baseline", because
+ * zero offenders and a blind rule look identical from outside (T-0095).
+ *
+ * @returns {Map<string, {line:number,text:string}[]>}
+ */
+export function violationsIn(path, lines) {
+  const found = new Map();
+  const commented = blockCommentLines(lines);
+  for (const rule of RULES) {
+    if (!rule.files(path)) continue;
+    // A file-level rule answers once per file with the line to report, or
+    // null. The pragma on the line above that line excuses it, like any other.
+    if (rule.fileTest) {
+      const at = rule.fileTest(lines);
+      if (at === null || at === undefined || at < 0) continue;
+      const prev = at > 0 ? lines[at - 1] : "";
+      const pragma = PRAGMA.exec(prev);
+      if (pragma && pragma[1] === rule.id) continue;
+      found.set(`${rule.id}::${path}`, [{ line: at + 1, text: lines[at].trim().slice(0, 120) }]);
+      continue;
+    }
+    for (let i = 0; i < lines.length; i++) {
+      // A rule is a regex, or a predicate where a regex cannot answer alone
+      // (token-must-exist needs the declared set).
+      const hit = rule.test ? rule.test(lines[i]) : rule.pattern.test(lines[i]);
+      if (!hit) continue;
+      // A rule that flags prose about the anti-pattern makes documenting it
+      // impossible. Code rules ignore comment-only lines; the voice rule does not
+      // (a comment is still text a human reads).
+      if (rule.codeOnly !== false) {
+        const t = lines[i].trimStart();
+        if (t.startsWith("//") || t.startsWith("*") || t.startsWith("/*") || t.startsWith("{/*")) continue;
+        // And the interior of a block comment, which carries no marker in CSS.
+        if (commented[i]) continue;
+      }
+      // A pragma line names the rule it excuses; it is never itself a hit.
+      if (PRAGMA.test(lines[i])) continue;
+      const prev = i > 0 ? lines[i - 1] : "";
+      const pragma = PRAGMA.exec(prev);
+      if (pragma && pragma[1] === rule.id) continue;
+      const key = `${rule.id}::${path}`;
+      if (!found.has(key)) found.set(key, []);
+      found.get(key).push({ line: i + 1, text: lines[i].trim().slice(0, 120) });
+    }
+  }
+  return found;
+}
+
 export function scanTree() {
   const files = SCAN_DIRS.filter((d) => existsSync(join(ROOT, d))).flatMap((d) =>
     walk(join(ROOT, d)),
@@ -238,25 +657,7 @@ export function scanTree() {
   for (const abs of files) {
     const path = rel(abs);
     const lines = readFileSync(abs, "utf-8").split(/\r?\n/);
-    for (const rule of RULES) {
-      if (!rule.files(path)) continue;
-      for (let i = 0; i < lines.length; i++) {
-        if (!rule.pattern.test(lines[i])) continue;
-        // A rule that flags prose about the anti-pattern makes documenting it
-        // impossible. Code rules ignore comment-only lines; the voice rule does not
-        // (a comment is still text a human reads).
-        if (rule.codeOnly !== false) {
-          const t = lines[i].trimStart();
-          if (t.startsWith("//") || t.startsWith("*") || t.startsWith("/*")) continue;
-        }
-        const prev = i > 0 ? lines[i - 1] : "";
-        const pragma = PRAGMA.exec(prev);
-        if (pragma && pragma[1] === rule.id) continue;
-        const key = `${rule.id}::${path}`;
-        if (!found.has(key)) found.set(key, []);
-        found.get(key).push({ line: i + 1, text: lines[i].trim().slice(0, 120) });
-      }
-    }
+    for (const [key, hits] of violationsIn(path, lines)) found.set(key, hits);
   }
 
   const counts = Object.fromEntries(

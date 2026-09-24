@@ -30,11 +30,9 @@ import {
   closeOrphanedActiveSessions,
   previewOrphanSweep,
 } from "@/lib/sessions/session-orphan-sweep";
-import { isReadOnly } from "@/lib/api-auth";
-import { serviceUnavailable, methodNotAllowed } from "@/lib/api-response";
-import { readOnlyMessage } from "@/lib/read-only";
-import { appendAuditLine } from "@/lib/audit-log";
-import { logApiError } from "@/lib/api-logger";
+import { methodNotAllowed } from "@/lib/api/api-response";
+import { appendAuditLine } from "@/lib/api/audit-log";
+import { logApiError } from "@/lib/api/api-logger";
 
 export async function POST(request: NextRequest) {
   let body: { dryRun?: boolean } = {};
@@ -44,12 +42,6 @@ export async function POST(request: NextRequest) {
     // empty body is fine — defaults to dryRun=false
   }
   const dryRun = body.dryRun !== false; // default to dry-run for safety
-
-  if (dryRun === false && isReadOnly()) {
-    return serviceUnavailable(
-      readOnlyMessage("the orphan-session backfill cannot write")
-    );
-  }
 
   try {
     const database = getDb();
@@ -89,6 +81,5 @@ export async function POST(request: NextRequest) {
 // backfills. Saying so is the whole point of this stub.
 export async function GET() {
   return methodNotAllowed(
-    "GET is not supported here — this endpoint BACKFILLS session status and is POST-only",
-  );
+    "GET is not supported here — this endpoint BACKFILLS session status and is POST-only", ["POST"]);
 }

@@ -1,69 +1,57 @@
 // ═══════════════════════════════════════════════════════════════
-// Dashboard - PatterStage Home (Redesigned)
+// Dashboard - PatterStage Home, the operations board
 // ═══════════════════════════════════════════════════════════════
-// Lean operational overview. No nav cards, no fake terminals.
-// One-glance situational awareness → one-click actions.
+// What is happening on this machine right now, and one click into the
+// surface that answers each question in full. History (the charts, the
+// mission mix, the trophy case) lives on Insights (T-0099, B5). Three pills,
+// one Progress line, the dispatch strip, the live panels. No clock, no Story
+// Weaver card, no hero charts.
+//
+// Three pills, not six, since U13 (T-0127): Gateway and Memory were said as a
+// pill AND as a Subsystems row that carried the reason the pill could not;
+// Errors was said as a pill and as a panel. Each fact is said once, where it
+// is best said, and the row is the three facts nothing else here carries.
 
 "use client";
 
-import { useState, useCallback, useMemo, memo as reactMemo } from "react";
+import { useState, useCallback, useMemo } from "react";
 import Link from "next/link";
-import {
-  // Dashboard icons
-  Activity,
-  Layers,
-  Radio,
-  ChevronRight,
-  Gamepad2,
-  BookOpen,
-  Timer,
-} from "lucide-react";
+import { ChevronRight, Radio, Timer, Wallet, Zap } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
 import { timeAgo } from "@/lib/utils";
-import { shellHeaderBarClasses } from "@/lib/theme";
-import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
+import Card from "@/components/ui/Card";
+import LinkButton from "@/components/ui/LinkButton";
+import LoadErrorBanner from "@/components/ui/LoadErrorBanner";
+import PageLoading from "@/components/ui/PageLoading";
 import AppPageShell from "@/components/layout/AppPageShell";
-import PageTitle from "@/components/layout/PageTitle";
+import PageHeader from "@/components/layout/PageHeader";
 import { StatPill, StatPillSkeleton } from "@/components/dashboard/StatPill";
-import { Panel, PanelHeader } from "@/components/dashboard/Panel";
-import CommandCenter from "@/components/dashboard/CommandCenter";
-import { FadeIn } from "@/components/motion";
 import DispatchStrip from "@/components/dashboard/DispatchStrip";
-import FirstRunPanel from "@/components/dashboard/FirstRunPanel";
+import NextQuestCard from "@/components/dashboard/NextQuestCard";
+import ProgressLine from "@/components/dashboard/ProgressLine";
+import SubsystemsPanel from "@/components/dashboard/SubsystemsPanel";
 import ActiveMissionsPanel from "@/components/dashboard/ActiveMissionsPanel";
 import PlatformsPanel from "@/modules/hermes/components/PlatformsPanel";
 import ErrorsPanel from "@/components/dashboard/ErrorsPanel";
 import ProcessesPanel from "@/components/dashboard/ProcessesPanel";
-import { toastError } from "@/lib/api-fetch";
-import { runMutation } from "@/lib/run-mutation";
-import { toastFromResult } from "@/lib/dashboard/toast-from-result";
-import { dispatchMissionAction } from "@/hooks/success-message-for-dispatch";
+import { runWrite } from "@/lib/api/api-write";
+import { dispatchMission } from "@/hooks/success-message-for-dispatch";
 import { isMissionActive } from "@/lib/missions/mission-board";
-import { countInWindow, ACTIVE_WINDOW_MS, RECENT_WINDOW_MS } from "@/lib/sessions/session-window";
 import { dedupErrors } from "@/lib/dashboard/dashboard-error-dedup";
 import { describeSchedulerHealth } from "@/lib/dashboard/scheduler-pill";
-import { formatModelSubtitle } from "@/lib/dashboard/dashboard-model-subtitle";
+import { settleFirstRunFacts, type FirstRunFacts } from "@/lib/dashboard/first-run-steps";
+import { formatUsd } from "@/lib/spend/spend-law";
+import { SUBSYSTEM_STATE_LABELS, statusTone } from "@/lib/ui/status-labels";
+import { statusToneClasses } from "@/lib/ui/theme";
 import { useTwoStepConfirm } from "@/hooks/useTwoStepConfirm";
 import { useInterval } from "@/hooks/useInterval";
 import { useDashboard } from "@/hooks/useDashboard";
+import { useOperatorPrefs } from "@/hooks/useOperatorPrefs";
+import { useQuestHost } from "@/hooks/useQuestHost";
+import { useStats } from "@/hooks/useStats";
+import { useAgentExperience } from "@/hooks/useAgentExperience";
+import { useSpend } from "@/hooks/useSpend";
 import { ConfigYamlErrorAlert } from "@/components/config/ConfigYamlErrorAlert";
-
-// ── Live Clock (isolated re-render) ───────────────────────────
-
-const LiveClock = reactMemo(function LiveClock() {
-  const [time, setTime] = useState<Date>(new Date());
-  useInterval(() => setTime(new Date()), { ms: 1000 });
-  return (
-    <>
-      <div className="text-sm font-mono text-neon-cyan" suppressHydrationWarning>
-        {time.toLocaleTimeString("en-US", { hour12: false })}
-      </div>
-      <div className="text-xs text-ps-text-muted" suppressHydrationWarning>
-        {time.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}
-      </div>
-    </>
-  );
-});
 
 export default function Dashboard() {
   // All dashboard data comes from the TanStack Query layer
@@ -78,32 +66,54 @@ export default function Dashboard() {
     monitor,
     processes,
     missions,
-    config,
+    // `config` is deliberately not destructured. The header used to read
+    // config.yaml's model fields here and decide for itself what they meant;
+    // that verdict is resolved once on the server now and arrives as
+    // `modelReadiness`. The batch still carries `config` for whatever reads it
+    // next; this screen no longer needs it.
     templates,
     categories,
-    registryAgentModelLabel,
-    sessionTrend,
+    modelReadiness,
+    subsystems,
     ready,
+    monitorError,
+    monitorSettled,
+    subsystemsError,
+    subsystemsSettled,
     refetchMonitor,
     refetchMissions,
     refetchProcesses,
+    refetchSubsystems,
   } = useDashboard();
+  // The Progress line reads the stats poll the shell already makes, the
+  // agents ranked by growth, and this month's spend for the Spend pill.
+  const { stats, error: statsError, refetch: refetchStats } = useStats();
+  const { entries: agentsByGrowth } = useAgentExperience();
+  const { spend } = useSpend();
+  // The Start here card: which quest is next comes off the stats poll above,
+  // what this host can attempt from the three status reads, and whether the
+  // operator has put the guide away from their own preferences.
+  const questHost = useQuestHost();
+  const { prefs, setPref } = useOperatorPrefs();
+  const guideHidden = prefs["guide.hidden"] === true;
+  const hideGuide = useCallback(() => setPref("guide.hidden", true), [setPref]);
 
   // The dispatch panel's collapsed/expanded state + template grouping
   // now live inside <DispatchStrip/>; the page just hands it templates.
   const [errorSev, setErrorSev] = useState<"all" | "error" | "warning">("all");
   const [syncNowBusy, setSyncNowBusy] = useState(false);
   const { showToast, toastElement } = useToast();
-  const { isArmedFor, arm, confirm } = useTwoStepConfirm({ autoDismissMs: 4000 });
+  const { isArmedFor, arm, confirm: confirmArmed } = useTwoStepConfirm({ autoDismissMs: 4000 });
 
   const handleSyncNow = useCallback(
     () =>
-      runMutation(showToast, {
-        busy: setSyncNowBusy,
-        build: () => ({}),
-        path: "/api/sync",
-        successMsg: "Background sync completed",
-        errorMsg: "Sync failed",
+      runWrite({
+        setBusy: setSyncNowBusy,
+        showToast,
+        url: "/api/sync",
+        body: {},
+        successMessage: "Background sync completed",
+        errorMessage: "Sync failed",
         onSuccess: async () => {
           await refetchMonitor();
         },
@@ -127,71 +137,39 @@ export default function Dashboard() {
     return dedupErrors(filtered);
   }, [monitor, errorSev]);
 
-  // Severity selector for the Errors panel. Each severity pill in the
-  // .map() calls `() => setErrorSev(sev)` inline (line 791); promoting
-  // to a named useCallback with a parameter mirrors the
-  // `setSourceFilter(src)` / `setActiveLog(log.name)` / `setMissionFilter(id)`
-  // sibling pattern used across the List 1 + List 2 pages. The
-  // `setErrorSev` setter is stable per the `useState` contract, so the
-  // callback's identity is effectively constant per render cycle.
   const selectSeverity = useCallback(
     (sev: "all" | "error" | "warning") => setErrorSev(sev),
     [setErrorSev],
   );
-  // Note: useTwoStepConfirm handles its own unmount cleanup.
-  // The original handler had no busy state (the row already shows
-  // "Confirm?" via `isArmedFor`), so we keep the original `try/catch`
-  // shape rather than adopting `runMutation` (which requires a busy
-  // setter that the page does not consume).
+  // The row already shows "Confirm?" through `isArmedFor`, so the cancel
+  // carries no busy state of its own; the missions query is re-pulled so the
+  // active-missions panel drops the cancelled row.
   const handleCancelMission = useCallback(async (missionId: string, missionName: string) => {
     const doCancel = async () => {
-      try {
-        // Migrated from the inline `safeApiCall<{ missions: MissionBrief[] }>("/api/missions", { method: "POST", body: { action: "cancel", missionId } })` form
-        // to the shared `dispatchMissionAction` helper. The pre-migration type
-        // annotation was wrong — the route returns `{ mission, cancel: { accepted, processKillPending } }`,
-        // NOT `{ missions: MissionBrief[] }` (that envelope belongs to the list endpoint, not the
-        // cancel action). The destructure only reads `ok`/`error` so the type mismatch was
-        // invisible at runtime, but it was a maintenance trap. The helper now owns the wire call
-        // and the envelope type. Byte-equivalent at the call site.
-        const { ok, error } = await dispatchMissionAction("cancel", { missionId });
-        toastFromResult(
-          showToast,
-          { ok, error },
-          `Cancelled "${missionName}"`,
-          "Failed to cancel mission",
-        );
-        if (!ok) return;
-        // Re-pull the missions query so the active-missions panel drops
-        // the cancelled row (replaces the old manual fetch + setData).
-        await refetchMissions();
-      } catch (err) {
-        toastError(showToast, err, "Failed to cancel mission");
-      }
+      await dispatchMission("cancel", { missionId }, {
+        showToast,
+        successMessage: `Cancelled "${missionName}"`,
+        errorMessage: "Failed to cancel mission",
+      });
+      await refetchMissions();
     };
     if (!isArmedFor(missionId)) {
       arm(missionId);
       return;
     }
-    await confirm(doCancel);
-  }, [showToast, refetchMissions, isArmedFor, arm, confirm]);
+    await confirmArmed(doCancel);
+  }, [showToast, refetchMissions, isArmedFor, arm, confirmArmed]);
 
   const handleRefreshProcesses = useCallback(async () => {
     await refetchProcesses();
   }, [refetchProcesses]);
 
-  const modelConfig = config?.model as Record<string, unknown> | undefined;
-  const diskModel = (modelConfig?.default as string) || "";
-  const diskProvider = (modelConfig?.provider as string) || "";
-  // Header subtitle: prefer the model written to config.yaml; fall back to
-  // the registry's "default agent" (the user has set a default in the
-  // Models registry but hasn't yet pushed it to config.yaml); else "-".
-  // The 3-source priority ladder lives in `formatModelSubtitle`
-  // (src/lib/dashboard/dashboard-model-subtitle.ts) so the rule is
-  // unit-testable in isolation.
-  const modelSubtitle = useMemo(
-    () => formatModelSubtitle(diskModel, diskProvider, registryAgentModelLabel),
-    [diskModel, diskProvider, registryAgentModelLabel],
-  );
+  // Header subtitle: the label from the one readiness answer the server
+  // resolved. The ladder that used to live here (config file, then the models
+  // registry, then a dash) is that answer's own rule now, so the dashboard,
+  // chat and the Models page all say the same thing about the same install
+  // instead of each combining the same two facts differently.
+  const modelSubtitle = modelReadiness?.label ?? "-";
   // Is there actually an agent behind this control plane? `framework.available`
   // is the adapter's own answer (the DB-owned registry probes the install), and
   // `undefined` means the monitor could not tell — which is not the same as
@@ -199,15 +177,40 @@ export default function Dashboard() {
   const agentName = monitor?.framework?.name ?? "Hermes";
   const agentConfigured = monitor?.framework?.available !== false;
 
-  const firstRunFacts = useMemo(
+  const gatewayRow = subsystems?.subsystems.find((s) => s.id === "gateway") ?? null;
+  const gatewayReachable = gatewayRow?.state === "ok";
+  // The Start here card waits for both reads before it speaks, and the
+  // header's agent badge reads a gateway that has answered ONCE as reachable:
+  // the story used to change twice while loading and flip on a single failed
+  // probe (T-0099, D57). The Subsystems panel is deliberately not latched — it
+  // reports the check that was actually just made, "Checking…" and a failed
+  // check included, which is the other half of the same ruling.
+  const readingsSettled = monitorSettled && subsystemsSettled;
+  const rawFirstRunFacts = useMemo<FirstRunFacts>(
     () => ({
       frameworkName: agentName,
       frameworkAvailable: agentConfigured,
+      gatewayReachable,
+      gatewayUrl: gatewayRow?.url ?? null,
+      modelConfigured: modelReadiness?.ready === true,
       sessionCount: monitor?.sessions.total ?? 0,
       missionCount: missions.length,
     }),
-    [agentName, agentConfigured, monitor?.sessions.total, missions.length],
+    [agentName, agentConfigured, gatewayReachable, gatewayRow?.url, modelReadiness, monitor?.sessions.total, missions.length],
   );
+  // The previous reading is state, settled during render the way React
+  // documents for "information from previous renders": one guarded setState,
+  // no ref read in render, no effect lag on the first paint.
+  const [latched, setLatched] = useState<{ raw: FirstRunFacts; settled: FirstRunFacts } | null>(null);
+  if (!latched || latched.raw !== rawFirstRunFacts) {
+    setLatched({ raw: rawFirstRunFacts, settled: settleFirstRunFacts(latched?.settled ?? null, rawFirstRunFacts) });
+  }
+  const settledFacts = latched?.settled ?? rawFirstRunFacts;
+  const gatewaySettledReachable = settledFacts.gatewayReachable === true;
+  // The badge's word and tone are the Subsystems row's own, so the header
+  // cannot say ONLINE beside a row that says Not running (T-0132).
+  const gatewayWord = gatewayRow ? SUBSYSTEM_STATE_LABELS[gatewayRow.state] : null;
+  const gatewayToneClasses = gatewayWord ? statusToneClasses[statusTone(gatewayWord)] : null;
 
   const activeProcesses = useMemo(() => processes.filter((p) => p.status === "running"), [processes]);
   const activeMissions = useMemo(
@@ -215,153 +218,170 @@ export default function Dashboard() {
     [missions],
   );
 
-  // Timestamp for session-window comparisons. We DO NOT compute
-  // `new Date().getTime()` directly in the render body, because that
-  // would make `now` a brand-new number on every render, which in
-  // turn would invalidate the `sessionWindowSubtitle`
-  // `useMemo` on every render and defeat the entire purpose of the
-  // memo. Instead, hold `now` in `useState` (initialised once on mount)
-  // and refresh it on a 30-second `useInterval`. The values stay
-  // stable for 30-second windows — close enough for a dashboard whose
-  // monitor already polls every 10s.
+  // Timestamp for the scheduler pill's tick age and the Progress line's
+  // "next automation". Held in state and refreshed every 30 seconds rather
+  // than read in the render body, so the memos below stay stable between
+  // ticks; the monitor already polls every 10s.
   const [now, setNow] = useState(() => new Date().getTime());
   useInterval(() => setNow(new Date().getTime()), { ms: 30_000 });
 
   // The background scheduler's heartbeat, which the console previously threw
   // away: a stalled loop is why a schedule did not fire and why a dispatched
-  // mission never resolves. `now` is the same 30s-refreshed reading the
-  // session windows use, so the age advances without its own timer.
+  // mission never resolves.
   const schedulerPill = useMemo(
     () => describeSchedulerHealth(monitor?.scheduler, now),
     [monitor?.scheduler, now],
   );
 
-  // Sessions stat-pill subtitle: "N active · M last 7d" derived from
-  // the 5 most recent sessions exposed by /api/monitor. The full
-  // window math lives in countInWindow (src/lib/sessions/session-window.ts) so
-  // it's unit-testable without rendering the dashboard.
-  const sessionWindowSubtitle = useMemo(() => {
-    const recent = monitor?.sessions.recent ?? [];
-    const active = countInWindow(recent, ACTIVE_WINDOW_MS, now);
-    const last7d = countInWindow(recent, RECENT_WINDOW_MS, now);
-    return `${active} active · ${last7d} last 7d`;
-  }, [monitor?.sessions.recent, now]);
+  const monthSpend = spend?.periods.find((p) => p.period === "month") ?? null;
+  const errorCount = monitor?.errors.length ?? 0;
 
   return (
-    <AppPageShell variant="scanlines">
-      <PageTitle title="Dashboard" />
-      {/* Top Bar */}
-      <div className={`${shellHeaderBarClasses} sticky top-0 z-30 justify-between gap-4 w-full`}>
-        <div>
-          {/* Agent Framework + Model details. The app/brand identity
-              ("PatterStage · The Stage is Yours") lives in the far-left
-              Sidebar logo — we don't repeat it here. This header names the
-              active agent framework (Hermes today — the sole AgentRuntime
-              implementation, see src/lib/runtime/types.ts) plus the model. */}
-          <h1 className="text-xl font-bold tracking-tight flex items-baseline gap-2">
-            <span className="text-neon-cyan text-glow-cyan">Hermes</span>
-            <span className="hidden sm:inline text-xs font-normal font-mono text-ps-text-muted uppercase tracking-wider">
-              Agent Framework
-            </span>
-          </h1>
-          <p className="text-xs text-ps-text-muted font-mono">{modelSubtitle}</p>
-        </div>
-        <div className="flex items-center gap-6">
-          <div className="text-right">
-            <LiveClock />
-          </div>
-          {/* The badge used to be a hardcoded green ONLINE, sitting directly
-              under the agent-framework heading. On an install with no agent it
-              claimed the agent was up. It now reports what the monitor actually
-              found. */}
-          {agentConfigured ? (
-            <div className="flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full bg-neon-green pulse-glow" />
-              <span className="text-xs text-ps-text-secondary font-mono">ONLINE</span>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2" title={`${agentName} is not installed on this machine`}>
-              <div className="w-2 h-2 rounded-full bg-neon-orange" />
-              <span className="text-xs text-neon-orange font-mono">NOT INSTALLED</span>
-            </div>
-          )}
-        </div>
-      </div>
+    <AppPageShell
+      variant="scanlines"
+      header={
+        <PageHeader
+          icon={Zap}
+          // No title prop: the registry row that draws the rail entry is what
+          // names the h1, so the two cannot drift (T-0097, D55). It used to read
+          // "Hermes AGENT FRAMEWORK", which names the dependency rather than the
+          // place, on the one screen that painted its own bar. The app's own
+          // identity ("PatterStage · The Stage is Yours") lives in the far-left
+          // Sidebar logo; we do not repeat it here.
+          subtitle={`${agentName} · ${modelSubtitle}`}
+          color="cyan"
+          actions={
+            /* The badge used to be a hardcoded green ONLINE, sitting directly
+               under the agent-framework heading. On an install with no agent it
+               claimed the agent was up. It then reported what the monitor found:
+               ONLINE for PatterStage's own server, which nobody doubts, beside a
+               Subsystems row reading "Gateway · Not running" (the review of
+               2026-09-08). A fact is said once, where it is best said (T-0127):
+               the badge carries the gateway row's own word and tone, with the
+               row's reason as its tooltip, so the two cannot disagree; a blip
+               shows in both places for one poll, consistently. NOT INSTALLED
+               stays for the install with no agent and no reachable gateway,
+               which is the first run's fact and is read from the settled facts
+               so one failed probe cannot claim the agent is absent (D57,
+               T-0132). */
+            !agentConfigured && !gatewaySettledReachable ? (
+              <div className="flex items-center gap-2" title={`${agentName} is not installed on this machine`}>
+                <div className="w-2 h-2 rounded-full bg-neon-orange" />
+                <span className="text-micro text-neon-orange font-mono">NOT INSTALLED</span>
+              </div>
+            ) : gatewayRow && gatewayWord && gatewayToneClasses ? (
+              <div className="flex items-center gap-2" title={gatewayRow.reason}>
+                <div className={`w-2 h-2 rounded-full ${gatewayToneClasses.dot}`} />
+                <span className={`text-micro font-mono ${gatewayToneClasses.text}`}>Gateway · {gatewayWord}</span>
+              </div>
+            ) : null
+          }
+        />
+      }
+    >
       {toastElement}
 
+      {/* The loading contract (T-0122): the header is drawn above, and the body
+          holds its shape as a skeleton rather than a spinner in a void. */}
       {!ready ? (
-        <div className="flex items-center justify-center min-h-[60vh]">
-          <LoadingSpinner text="Loading dashboard..." />
-        </div>
+        <PageLoading label="Loading the dashboard" rows={5} rowClassName="h-24" />
       ) : (
-        <div className="max-w-7xl mx-auto px-6 py-6 space-y-6">
-        {/* First run: an empty install gets a checklist before it gets widgets.
-            Renders nothing once there is an agent and any activity. */}
-        <FirstRunPanel facts={firstRunFacts} />
+        <div className="space-y-6">
+        {/* Start here: the next quest, before the widgets. Renders nothing once
+            every quest is done or the operator has hidden the guide, and
+            nothing at all until both reads it depends on have answered — a
+            card that speaks before the monitor and the subsystems have settled
+            is D57 again (T-0099). */}
+        {readingsSettled && (
+          <NextQuestCard
+            quests={stats?.quests}
+            host={questHost}
+            hidden={guideHidden}
+            onHide={hideGuide}
+          />
+        )}
         {/* Malformed config.yaml — one actionable alert (ConfigSync sets the
             stat; the sync no longer spams the log). */}
         {monitor?.system?.configYamlError ? (
           <ConfigYamlErrorAlert message={monitor.system.configYamlError} />
         ) : null}
-        {/* ═══ Compact Stat Row ═══ */}
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 min-w-0">
-          {monitor ? (
-            <>
-              <StatPill
-                icon={Radio}
-                label="Processes"
-                value={activeProcesses.length > 0 ? `${activeProcesses.length} Active` : status?.soulFile ? "Idle" : "Offline"}
-                color={activeProcesses.length > 0 ? "green" : status?.soulFile ? "cyan" : "pink"}
-                href="/operations/agents"
-              />
-              <StatPill
-                icon={Activity}
-                label="Sessions"
-                value={monitor.sessions.total.toLocaleString()}
-                color="purple"
-                subtitle={sessionWindowSubtitle}
-                href="/sessions"
-                trend={sessionTrend}
-                trendColor="purple"
-              />
-              <StatPill
-                icon={Layers}
-                label={`Memory · ${monitor.memory.provider || "Not Installed"}`}
-                value={monitor.memory.factCount >= 0 ? `${monitor.memory.factCount} facts` : "0 facts"}
-                color="pink"
-                href="/memory"
-              />
-              <StatPill
-                icon={Timer}
-                label="Scheduler"
-                value={schedulerPill.value}
-                color={schedulerPill.color}
-                subtitle={schedulerPill.subtitle}
-              />
-            </>
-          ) : (
-            <>
-              <StatPillSkeleton />
-              <StatPillSkeleton />
-              <StatPillSkeleton />
-              <StatPillSkeleton />
-            </>
-          )}
-        </div>
+        {/* Is each thing this product depends on up, and why not (T-0091). */}
+        <SubsystemsPanel
+          subsystems={subsystems?.subsystems ?? null}
+          checkedAt={subsystems?.checkedAt ?? null}
+          error={subsystemsSettled ? subsystemsError : null}
+          onRetry={() => void refetchSubsystems()}
+        />
+
+        {/* ═══ Three pills: scheduler, spend, processes ═══
+            The facts the Subsystems panel above and the Errors panel below do
+            not carry. Three states for the monitor they hang off: not yet
+            (skeletons), failed (an alert with Retry, never skeletons forever),
+            here. At three across, the subtext has room; at six it clipped. */}
+        {monitor ? (
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 min-w-0">
+            <StatPill
+              icon={Timer}
+              label="Scheduler"
+              value={schedulerPill.value}
+              color={schedulerPill.color}
+              subtitle={schedulerPill.subtitle}
+              href="/agent/settings/system"
+            />
+            <StatPill
+              icon={Wallet}
+              label="Spend"
+              value={monthSpend ? formatUsd(monthSpend.totalUsd) : "—"}
+              color="yellow"
+              subtitle="this month"
+              href="/results/insights"
+            />
+            <StatPill
+              icon={Radio}
+              label="Processes"
+              value={activeProcesses.length > 0 ? `${activeProcesses.length} Active` : status?.soulFile ? "Idle" : "Offline"}
+              color={activeProcesses.length > 0 ? "green" : status?.soulFile ? "cyan" : "pink"}
+              subtitle={activeProcesses.length > 0 ? "running now" : "nothing running"}
+              href="/agent/profiles"
+            />
+          </div>
+        ) : monitorError ? (
+          <LoadErrorBanner
+            error={`Couldn't read monitor data: ${monitorError}`}
+            onRetry={() => void refetchMonitor()}
+            hint="The pills read from /api/monitor. Nothing here is shown until it answers."
+            className="mb-0"
+          />
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 min-w-0">
+            <StatPillSkeleton />
+            <StatPillSkeleton />
+            <StatPillSkeleton />
+          </div>
+        )}
+
+        {/* ═══ Progress: streak, level, achievements, next automation, Quests ═══ */}
+        <ProgressLine
+          stats={stats ?? null}
+          statsError={statsError}
+          onRetryStats={() => void refetchStats()}
+          topAgent={agentsByGrowth[0] ?? null}
+          now={now}
+        />
 
         {/* ═══ Handoff / continuation ═══ */}
-        <div className="rounded-xl border border-white/10 bg-dark-900/40 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+        <Card as="section" padding="none" className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
           <div>
-            <div className="text-xs font-mono text-ps-text-muted uppercase tracking-wider">
+            <div className="text-micro font-mono text-ps-text-muted uppercase tracking-wider">
               Continue work
             </div>
-            <div className="text-sm text-ps-text-primary mt-1">
+            <div className="text-body text-ps-text-primary mt-1">
               {monitor?.sessions?.recent?.[0] ? (
                 <>
                   Latest session {timeAgo(monitor.sessions.recent[0].modified)}{" "}
                   <Link
-                    href={"/sessions/" + monitor.sessions.recent[0].id}
-                    className="text-neon-cyan hover:underline font-mono text-xs"
+                    href={"/results/sessions/" + monitor.sessions.recent[0].id}
+                    className="text-neon-cyan hover:underline font-mono text-micro"
                   >
                     open transcript
                   </Link>
@@ -371,13 +391,11 @@ export default function Dashboard() {
               )}
             </div>
           </div>
-          <Link
-            href="/sessions"
-            className="text-xs font-mono text-neon-purple hover:underline inline-flex items-center gap-1"
-          >
-            Session browser <ChevronRight className="w-3 h-3" />
-          </Link>
-        </div>
+          <LinkButton href="/results/sessions" variant="ghost" color="purple" size="sm">
+            Session browser
+            <ChevronRight className="h-3 w-3" aria-hidden="true" />
+          </LinkButton>
+        </Card>
 
         {/* ═══ Mission Dispatch Quick Launch ═══ */}
         <DispatchStrip templates={templates} categories={categories} />
@@ -398,6 +416,7 @@ export default function Dashboard() {
           />
           <ErrorsPanel
             errors={filteredErrors}
+            count={errorCount}
             severity={errorSev}
             onSelectSeverity={selectSeverity}
           />
@@ -408,20 +427,6 @@ export default function Dashboard() {
           processes={processes}
           onRefresh={() => void handleRefreshProcesses()}
         />
-
-        {/* ═══ Rec Room ═══ */}
-        <Panel accent="purple">
-          <PanelHeader icon={Gamepad2} label="Rec Room" accent="purple" />
-          <Link href="/recroom/story-weaver" className="flex items-center justify-center gap-3 py-4 hover:bg-white/[0.02] transition-colors">
-            <BookOpen className="w-5 h-5 text-neon-purple" />
-            <span className="text-sm font-mono text-ps-text-secondary">Story Weaver</span>
-          </Link>
-        </Panel>
-
-        {/* ═══ Command Center (operator stats + data-viz) — below the live monitor ═══ */}
-        <FadeIn>
-          <CommandCenter />
-        </FadeIn>
       </div>
       )}
     </AppPageShell>

@@ -57,6 +57,38 @@ export const GROWTH_LOG_KEY: string;
 export const ALLOW_GROWTH_FLAG: string;
 export const MIN_REASON_LENGTH: number;
 
+/** One rule of the registry: a regex, or a predicate where a regex cannot answer alone. */
+export interface Rule {
+  id: string;
+  law: string;
+  files: (path: string) => boolean;
+  pattern?: RegExp;
+  test?: (line: string) => boolean;
+  /** File-level: the index of the line to report, or null when the file is clean. */
+  fileTest?: (lines: readonly string[]) => number | null;
+  codeOnly?: boolean;
+}
+
+export const RULES: readonly Rule[];
+
+/** Every `--color-<name>` declared in a stylesheet (T-0095, token-must-exist). */
+export function declaredColourTokens(css: string): Set<string>;
+
+/** The house colour tokens a line names that `declared` does not contain. */
+export function undeclaredColourClasses(line: string, declared: Set<string>): string[];
+
+/**
+ * Which lines sit inside a block comment, so a code-only rule can skip them.
+ *
+ * The per-line skip recognises a comment by its leading marker, which is the
+ * house style in .ts and .tsx and is not CSS: a block comment's interior lines
+ * carry none (T-0118).
+ */
+export function blockCommentLines(lines: readonly string[]): boolean[];
+
+/** Every violation in one file's lines, keyed `rule::path` (the unit scanTree walks). */
+export function violationsIn(path: string, lines: readonly string[]): Map<string, ViolationHit[]>;
+
 export function scanTree(): {
   found: Map<string, ViolationHit[]>;
   counts: Record<string, number>;

@@ -19,14 +19,14 @@
 
 import { existsSync, readFileSync, readdirSync, statSync } from "fs";
 
-import { messageFromError } from "@/lib/api-fetch";
+import { messageFromError } from "@/lib/api/api-fetch";
 import { buildHermesPathBundle } from "./paths";
 import { getHermesDefaultRoot } from "./profile-paths";
 import {
   getAgentRoot,
   setAgentRootSyncStatus,
   updateAgentRoot,
-} from "@/lib/agent-root-repository";
+} from "@/lib/agents/agent-root-repository";
 import {
   assembleConfigYamlForProfile,
   getProfile,
@@ -35,12 +35,13 @@ import {
   updateProfileContent,
 } from "./profiles-repository";
 import { configYamlToColumnValues } from "./profile-config-builder";
+import { repairGuidance } from "./profile-sync-shared";
 import { skillFilePath } from "./skills-config";
 import {
   parseSkillFrontmatter,
   setSkillSyncStatus,
   upsertSkill,
-} from "@/lib/skills-repository";
+} from "@/lib/skills/skills-repository";
 import { now } from "@/lib/db";
 import {
   assembleRootConfig,
@@ -108,7 +109,11 @@ export function pullProfileFromHermes(
     return { success: true, slug, backupPath: null, error: null };
   }
   catch (err) {
-    const message = messageFromError(err, "");
+    const raw = messageFromError(err, "");
+    // A parse refusal names its repair (T-0086); everything else passes through.
+    const message = /did not parse/.test(raw)
+      ? `${raw} ${repairGuidance(bundle.backups, "then Pull again")}`
+      : raw;
     return { success: false, slug, backupPath: null, error: message };
   }
 }
@@ -143,7 +148,11 @@ export function pullRootFromHermes(options?: { reconcileDisk?: boolean }): SyncR
     return { success: true, slug: "default", backupPath: null, error: null };
   }
   catch (err) {
-    const message = messageFromError(err, "");
+    const raw = messageFromError(err, "");
+    // A parse refusal names its repair (T-0086); everything else passes through.
+    const message = /did not parse/.test(raw)
+      ? `${raw} ${repairGuidance(bundle.backups, "then Pull again")}`
+      : raw;
     return { success: false, slug: "default", backupPath: null, error: message };
   }
 }

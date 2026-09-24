@@ -24,8 +24,13 @@
 import { useState } from "react";
 import { Wallet, AlertTriangle, ShieldAlert, Info } from "lucide-react";
 
+import Button from "@/components/ui/Button";
+import Card from "@/components/ui/Card";
+import { Input } from "@/components/ui/field";
+import { NativeSelect } from "@/components/ui/field/Select";
+import { InlineToggle } from "@/components/ui/Input";
 import { neonAlpha } from "@/components/viz/colors";
-import { inputFieldClasses } from "@/lib/theme";
+import { sectionHeadingClasses } from "@/lib/ui/theme";
 import {
   SPEND_PERIODS,
   formatUsd,
@@ -55,12 +60,9 @@ export default function SpendPanel({ summary, onSave, saving = false }: SpendPan
 
   if (!summary) {
     return (
-      <div
-        data-testid="spend-loading"
-        className="rounded-2xl border border-white/10 bg-dark-900/60 p-4 text-xs text-ps-text-muted"
-      >
+      <Card data-testid="spend-loading" className="text-body text-ps-text-muted">
         Loading provider spend…
-      </div>
+      </Card>
     );
   }
 
@@ -91,14 +93,20 @@ export default function SpendPanel({ summary, onSave, saving = false }: SpendPan
   const meterPct = verdict.fraction === null ? 0 : Math.min(100, Math.round(verdict.fraction * 100));
 
   return (
-    <div className="rounded-2xl border border-white/10 bg-dark-900/60 p-4">
+    <Card>
       <div className="mb-3 flex items-center gap-2">
         <Wallet className="h-4 w-4 text-neon-green" />
-        <h2 className="text-xs font-mono uppercase tracking-widest text-ps-text-muted">
+        <h2 className={sectionHeadingClasses}>
           Provider spend
         </h2>
+        {/* The old wording here said "prices are the published per-model rates".
+            On an install running a model the rate table has never heard of, not
+            one figure on this panel came from a published rate: they all came
+            from the fallback. Do not put that sentence back. The rates are a
+            short static list, and the copy has to hold for the installs that
+            are not on it. */}
         <span
-          title="Estimated from the token usage already recorded against each run. Prices are the published per-model rates, so treat this as an estimate, not an invoice."
+          title="Estimated from the token usage already recorded against each run. Where there is a price on file for the model it is used; where there is not, the run is priced at a fallback rate and the panel says so below. Either way this is an estimate, not an invoice."
           aria-label="How this is estimated"
           className="ml-0.5 cursor-help text-ps-text-faint transition-colors hover:text-ps-text-secondary"
         >
@@ -109,27 +117,66 @@ export default function SpendPanel({ summary, onSave, saving = false }: SpendPan
       {/* ── Per period. Always on screen, budget or no budget. ── */}
       <div className="grid grid-cols-3 gap-3">
         {summary.periods.map((p) => (
-          <div
+          <Card
             key={p.period}
+            variant="raised"
+            padding="none"
             data-testid={`spend-total-${p.period}`}
-            className="rounded-xl border border-white/10 bg-dark-900/40 p-3"
-            style={{ boxShadow: `inset 0 0 18px ${neonAlpha("green", 5)}` }}
           >
-            <div className="font-mono text-2xl font-bold text-ps-text-primary">
-              {formatUsd(p.totalUsd)}
+            {/* The inset glow is painted on the tile's own inner box: Card
+                carries no style prop, and an inset shadow on a wrapper would
+                sit behind the card's opaque fill. */}
+            <div className="rounded-ps-lg p-3" style={{ boxShadow: `inset 0 0 18px ${neonAlpha("green", 5)}` }}>
+              <div className="font-mono text-display font-bold text-ps-text-primary">
+                {formatUsd(p.totalUsd)}
+              </div>
+              <div className="mt-0.5 text-micro uppercase tracking-wider text-ps-text-muted">{p.label}</div>
+              {/* Driven by the row's OWN note, not by its basis.
+                  The mark used to key off `basis.estimatedUsd > 0` and point at a
+                  sentence built from the budget period alone, which broke twice:
+                  a week can be estimated while the month it hangs under is not
+                  (the ISO week opens on a Monday, so early in most months the
+                  week window reaches back past the month boundary), and the note
+                  that did render carried the budget period's dollars, not this
+                  tile's. The note is per period now, and the mark and its
+                  explanation come from the same field so neither can outlive the
+                  other. */}
+              {p.estimateNote && (
+                <div
+                  data-testid={`spend-estimated-${p.period}`}
+                  title={p.estimateNote}
+                  className="mt-1 text-body text-ps-text-faint"
+                >
+                  {p.basis.knownUsd > 0 ? "Part estimated" : "Estimated"}
+                </div>
+              )}
             </div>
-            <div className="mt-0.5 text-xs uppercase tracking-wider text-ps-text-muted">{p.label}</div>
-          </div>
+          </Card>
         ))}
       </div>
 
-      {/* ── Per source, for the period the budget covers. ── */}
-      <ul className="mt-3 space-y-1.5">
+      {/* ── Per source, for the period the budget covers. ──
+          The heading is not decoration. Three period tiles sit directly above
+          this list and it counts only one of them, so without the label its
+          figures read as belonging to whichever tile the eye landed on last. */}
+      <div
+        data-testid="spend-sources-period"
+        className="mt-3 text-micro uppercase tracking-wider text-ps-text-faint"
+      >
+        {periodLabel(summary.budgetPeriod)}, by source
+      </div>
+      {/* Columns, not one full-width list. Measured on /results/insights,
+          this put a source name at one end of a 1,134px row and its
+          figures at the other: a 944px gap, the worst label-to-value
+          distance anywhere in the product, and four of these rows were
+          over 400px. A pair you have to track across a thousand pixels
+          is two facts rather than one (T-0124). */}
+      <ul className="mt-1.5 grid grid-cols-1 gap-x-8 gap-y-1.5 sm:grid-cols-2 xl:grid-cols-3">
         {budget.sources.map((s) => (
           <li
             key={s.source}
             data-testid={`spend-source-${s.source}`}
-            className="flex items-center justify-between gap-2 text-xs"
+            className="flex items-center justify-between gap-2 text-body"
           >
             <span className="text-ps-text-secondary">{s.label}</span>
             <span className="font-mono text-ps-text-muted">
@@ -138,13 +185,28 @@ export default function SpendPanel({ summary, onSave, saving = false }: SpendPan
               {/* Never "$0.00" for a source this database did not record. A
                   confident zero is a worse answer than an honest blank. */}
               {s.recorded ? formatUsd(s.costUsd ?? 0) : "cost not recorded"}
+              {/* Composer stages and Story Weaver chapters carry no model, so
+                  they are ALWAYS priced at the fallback. Saying so on the row
+                  is the difference between a figure and a figure you can
+                  judge. */}
+              {s.estimatedUsd > 0 && (
+                <span className="ml-1.5 text-ps-text-faint">
+                  {s.costUsd !== null && s.estimatedUsd < s.costUsd ? "part estimated" : "estimated"}
+                </span>
+              )}
             </span>
           </li>
         ))}
       </ul>
 
+      {summary.estimateNote && (
+        <p data-testid="spend-rate-basis" className="mt-2 text-body leading-relaxed text-ps-text-faint">
+          {summary.estimateNote}
+        </p>
+      )}
+
       {summary.unmeasured.length > 0 && (
-        <p data-testid="spend-unmeasured" className="mt-2 text-xs leading-relaxed text-ps-text-faint">
+        <p data-testid="spend-unmeasured" className="mt-2 text-body leading-relaxed text-ps-text-faint">
           {summary.unmeasured.join(" ")}
         </p>
       )}
@@ -152,13 +214,13 @@ export default function SpendPanel({ summary, onSave, saving = false }: SpendPan
       {/* ── The meter exists only when a figure does. ── */}
       {policy.limitUsd !== null && (
         <div data-testid="spend-meter" className="mt-4">
-          <div className="flex items-center justify-between text-xs text-ps-text-muted">
+          <div className="flex items-center justify-between text-body text-ps-text-muted">
             <span>
               {periodLabel(policy.period)} against {formatUsd(policy.limitUsd)}
             </span>
             <span className="font-mono">{meterPct}%</span>
           </div>
-          <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+          <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-ps-surface-raised">
             <div
               className={`h-full rounded-full ${verdict.breached ? "bg-neon-pink" : "bg-neon-green"}`}
               style={{ width: `${meterPct}%` }}
@@ -169,32 +231,36 @@ export default function SpendPanel({ summary, onSave, saving = false }: SpendPan
 
       {/* ── Clause 3: a figure warns. Clause 4: only an armed stop stops. ── */}
       {verdict.state === "over" && !verdict.blocksUnattended && (
-        <p
+        <Card
+          variant="raised"
+          padding="none"
           data-testid="spend-warning"
-          className="mt-3 flex items-start gap-2 rounded-lg border border-neon-orange/30 bg-neon-orange/5 p-2.5 text-xs leading-relaxed text-ps-text-secondary"
+          className="mt-3 flex items-start gap-2 p-2.5 text-body leading-relaxed text-ps-text-secondary"
         >
-          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-neon-orange" />
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-status-warn" />
           <span>{verdict.message}</span>
-        </p>
+        </Card>
       )}
 
       {verdict.blocksUnattended && (
-        <p
+        <Card
+          variant="raised"
+          padding="none"
           data-testid="spend-stopped"
-          className="mt-3 flex items-start gap-2 rounded-lg border border-neon-pink/30 bg-neon-pink/5 p-2.5 text-xs leading-relaxed text-ps-text-secondary"
+          className="mt-3 flex items-start gap-2 p-2.5 text-body leading-relaxed text-ps-text-secondary"
         >
-          <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-neon-pink" />
+          <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-status-blocked" />
           <span>{verdict.message}</span>
-        </p>
+        </Card>
       )}
 
       {/* ── The budget control. One line until it is asked for. ── */}
-      <div className="mt-4 border-t border-white/10 pt-3">
+      <div className="mt-4 border-t border-ps-edge-hairline pt-3">
         <button
           type="button"
           data-testid="spend-budget-toggle"
           onClick={() => setOpen((v) => !v)}
-          className="text-xs text-ps-text-muted transition-colors hover:text-ps-text-secondary"
+          className="inline-flex min-h-6.5 items-center text-body text-ps-text-muted transition-colors hover:text-ps-text-secondary"
         >
           {policy.limitUsd === null
             ? "Set a budget (optional)"
@@ -204,23 +270,24 @@ export default function SpendPanel({ summary, onSave, saving = false }: SpendPan
         {open && (
           <div className="mt-3 space-y-3">
             <div className="flex flex-wrap items-center gap-2">
-              <label className="text-xs text-ps-text-muted" htmlFor="spend-limit">
+              <label className="text-body text-ps-text-muted" htmlFor="spend-limit">
                 USD per
               </label>
-              <select aria-label="Spend limit period"
+              <NativeSelect
+                aria-label="Spend limit period"
                 id="spend-period"
                 data-testid="spend-period-select"
                 value={draftPeriod}
                 onChange={(e) => setPeriod(e.target.value as SpendPeriod)}
-                className={`${inputFieldClasses("green")} w-28`}
+                className="w-28 font-mono"
               >
                 {SPEND_PERIODS.map((p) => (
                   <option key={p} value={p}>
                     {p}
                   </option>
                 ))}
-              </select>
-              <input
+              </NativeSelect>
+              <Input
                 id="spend-limit"
                 data-testid="spend-limit-input"
                 type="text"
@@ -228,43 +295,44 @@ export default function SpendPanel({ summary, onSave, saving = false }: SpendPan
                 value={draftLimit}
                 placeholder="no budget"
                 onChange={(e) => setLimitText(e.target.value)}
-                className={`${inputFieldClasses("green")} w-32`}
+                className="w-32 font-mono"
               />
             </div>
 
-            <label className="flex items-start gap-2 text-xs leading-relaxed text-ps-text-secondary">
-              <input
-                type="checkbox"
+            <div className="flex items-start gap-2 text-body leading-relaxed text-ps-text-secondary">
+              <InlineToggle
                 data-testid="spend-hard-stop"
-                checked={draftHardStop}
+                value={draftHardStop}
                 disabled={draftLimitValue === null}
-                onChange={(e) => setHardStop(e.target.checked)}
-                className="mt-0.5"
+                onChange={setHardStop}
+                color="green"
+                labelledBy="spend-hard-stop-label"
               />
-              <span>
+              <span id="spend-hard-stop-label">
                 Hard stop: pause unattended dispatch when this figure is passed. Off by default.
                 Scheduled runs, the queue and Composer wait; dispatching by hand always works.
               </span>
-            </label>
+            </div>
 
             {formError && (
-              <p data-testid="spend-form-error" className="text-xs text-neon-pink">
+              <p data-testid="spend-form-error" className="text-body text-neon-pink">
                 {formError}
               </p>
             )}
 
-            <button
-              type="button"
+            <Button
+              variant="primary"
+              color="green"
+              size="sm"
               data-testid="spend-save"
               disabled={saving}
               onClick={save}
-              className="rounded-lg border border-neon-green/40 px-3 py-1.5 text-xs font-mono text-neon-green transition-colors hover:bg-neon-green/10 disabled:opacity-50"
             >
               {saving ? "Saving…" : "Save budget"}
-            </button>
+            </Button>
           </div>
         )}
       </div>
-    </div>
+    </Card>
   );
 }

@@ -14,11 +14,15 @@
 
 import { copyFileSync, existsSync } from "fs";
 
-import { atomicWriteFile } from "./hermes-config-write";
+import {
+  assertParseableConfigYaml,
+  atomicWriteFile,
+  findLatestParseableBackup,
+} from "./hermes-config-write";
 import { backupTimestamp, ensureDir } from "@/lib/fs/fs-helpers";
 import { getHermesDefaultRoot, resolveProfileHermesHome } from "./profile-paths";
 import { buildHermesPathBundle } from "./paths";
-import { type AgentRootRow } from "@/lib/agent-root-repository";
+import { type AgentRootRow } from "@/lib/agents/agent-root-repository";
 import {
   buildConfigYaml,
   parseConfigYaml,
@@ -80,6 +84,14 @@ export function profileRootForSlug(slug: string): string {
  * cache-aware writer would change behaviour.
  */
 export function writeWithBackup(targetPath: string, content: string, backupsDir: string): void {
+  // The belt (T-0086). This is the writer the corrupted config.yamls went
+  // through — text-assembled pushes with zero validation. After the assembler
+  // rewrite it should never fire; it exists so any future regression becomes a
+  // loud refusal instead of a corrupt file on the operator's disk. Non-YAML
+  // targets (SOUL.md and friends) pass untouched — they are prose.
+  if (targetPath.toLowerCase().endsWith("config.yaml")) {
+    assertParseableConfigYaml(content, targetPath);
+  }
   if (existsSync(targetPath)) {
     ensureDir(backupsDir);
     const base = targetPath.split(/[/\\]/).pop() ?? "file";
@@ -98,9 +110,36 @@ export function catalogKeysForPull(): string[] {
   return collectSkillDirectoryNames(skillsRootForProfile());
 }
 
-/** Assemble the root row's config.yaml the way both push and drift expect it. */
+/**
+ * Assemble the root row's config.yaml the way both push and drift expect it.
+ *
+ * THROWS when the stored row does not parse. Assembling from a failed parse is
+ * the silent preserved-section drop that turned one corrupt write into
+ * compounding data loss (T-0086); the push/pull callers catch this and surface
+ * it as the row's syncError, and the message names the newest backup that
+ * still parses so the repair is one copy command away.
+ */
+/**
+ * The repair, said once. Names the newest backup that still parses and never
+ * performs the restore (T-0086): a backup carries older model settings and
+ * reviving one silently could flip the operator's active model.
+ */
+export function repairGuidance(backupsDir: string, then: string): string {
+  const restorable = findLatestParseableBackup(backupsDir);
+  return restorable
+    ? `Restore ${restorable} over config.yaml, ${then}.`
+    : `Repair config.yaml by hand, ${then}.`;
+}
+
 export function assembleRootConfig(row: AgentRootRow): string {
   const parts = parseConfigYaml(row.configYaml);
+  if (parts.parseError) {
+    const backups = buildHermesPathBundle(getHermesDefaultRoot()).backups;
+    throw new Error(
+      `the stored root config.yaml did not parse (${parts.parseError}) — refusing to assemble from it. ` +
+        repairGuidance(backups, "then Pull from Hermes to repair the database copy"),
+    );
+  }
   const { toolsets } = resolvePlatformToolsets(
     row.platformToolsetsJson,
     row.configYaml,
@@ -112,6 +151,7 @@ export function assembleRootConfig(row: AgentRootRow): string {
     platformDisabledSkills: parts.platformDisabledSkills,
     platformToolsets: toolsets,
     preservedSections: parts.preservedSections,
-    extraYamlLines: parts.extraYamlLines,
+    // Forwarded, or a root push still eats skills.creation_nudge_interval.
+    skillsExtras: parts.skillsExtras,
   });
 }

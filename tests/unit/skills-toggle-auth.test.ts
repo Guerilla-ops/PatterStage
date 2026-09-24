@@ -35,14 +35,13 @@ jest.mock("@/modules/hermes/lib/agent-runtime", () => ({
   })),
 }));
 
-jest.mock("@/lib/api-logger", () => ({
+jest.mock("@/lib/api/api-logger", () => ({
   logApiError: jest.fn(),
 }));
 
 const mockRequireAuth = jest.fn((..._a: unknown[]): NextResponse | null => null);
 
-jest.mock("@/lib/api-auth", () => ({
-  requireNotReadOnly: jest.fn(() => null),
+jest.mock("@/lib/api/api-auth", () => ({
   isReadOnly: jest.fn(() => false),
 }));
 

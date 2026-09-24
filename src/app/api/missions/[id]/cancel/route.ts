@@ -1,42 +1,24 @@
 // ═══════════════════════════════════════════════════════════════
-// POST /api/missions/[id]/cancel — stop a running mission via the runtime
+// POST /api/missions/[id]/cancel — cancel a mission, REST-shaped
 //
-// Replaces SIGTERM/SIGKILL/pkill process-group killing with an HTTP
-// runtime.stopRun(). Local run/mission/session state is always finalised.
+// The same body as POST /api/missions { action: "cancel" }, under the URL a
+// REST client expects. It used to be a second implementation
+// (`cancelMissionRun`) that stopped the backend FIRST and answered a different
+// envelope, so the same click took two orders and two shapes depending on
+// which door it came through (T-0095, D128). Now there is one: the local
+// record is written synchronously, the backend stop runs in the background,
+// and the answer is `{ mission, cancel }` either way.
 // ═══════════════════════════════════════════════════════════════
 
 import { NextRequest } from "next/server";
-import { requireNotReadOnly } from "@/lib/api-auth";
-import { serverErrorFromCatch } from "@/lib/api-logger";
-import { ok, notFound, serverError } from "@/lib/api-response";
-import { getMission } from "@/lib/missions/mission-repository";
-import { cancelMissionRun } from "@/lib/orchestration";
+import { handleCancelMission } from "@/lib/missions/mission-handlers/cancel";
+import { route } from "@/lib/api/api-route";
 
 interface Ctx {
   params: Promise<{ id: string }>;
 }
 
-export async function POST(_request: NextRequest, ctx: Ctx) {
-  // Read-only mode. NOT authentication: src/proxy.ts authenticates every
-  // request before a handler runs, and design-lint forbids a per-route auth
-  // check. The proxy also refuses unsafe METHODS under PS_READ_ONLY, so this
-  // is defence in depth on a write, spelled with the name that says what it
-  // does (T-0034).
-  const readOnly = requireNotReadOnly("mission runs cannot be cancelled");
-  if (readOnly) return readOnly;
-
+export const POST = route("POST /api/missions/[id]/cancel", (p) => `id=${p.id}`, "Failed to cancel mission", async (_request: NextRequest, ctx: Ctx) => {
   const { id } = await ctx.params;
-  try {
-    if (!getMission(id)) return notFound("Mission not found");
-    const result = await cancelMissionRun(id);
-    if (!result.ok) return serverError(result.error ?? "Cancel failed");
-    return ok({ cancelled: true });
-  } catch (error) {
-    return serverErrorFromCatch(
-      "POST /api/missions/[id]/cancel",
-      `id=${id}`,
-      error,
-      "Failed to cancel mission",
-    );
-  }
-}
+  return handleCancelMission({ id });
+});

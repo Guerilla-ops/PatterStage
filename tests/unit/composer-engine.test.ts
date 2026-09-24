@@ -3,23 +3,13 @@
 // Walks the Composer graph engine through a PASS path + HIL gate + a FAIL
 // loop-back, against REAL SQLite with a mocked runtime.
 
-import { join } from "path";
-import { execBaselineSchema } from "../helpers/baseline-db";
+import { openBaselineDb } from "../helpers/baseline-db";
 import { applyComposerMigration } from "@/lib/db/apply-composer-migration";
 import { applyComposerGroupLinkMigration } from "@/lib/db/apply-composer-group-link-migration";
 
 let testDb: import("better-sqlite3").Database | null = null;
 
-jest.mock("@/lib/db", () => {
-  const actualCrypto = jest.requireActual("crypto") as typeof import("crypto");
-  return {
-    getDb: () => testDb!,
-    inTransaction: <T,>(fn: () => T) => testDb!.transaction(fn)(),
-    uuid: () => actualCrypto.randomUUID(),
-    now: () => new Date().toISOString(),
-    ensureDb: () => undefined,
-  };
-});
+jest.mock("@/lib/db", () => require("../helpers/baseline-db").dbSingletonMock(() => testDb));
 jest.mock("@/lib/runtime", () => ({
   runtime: { submitRun: jest.fn(), getRun: jest.fn(), stopRun: jest.fn() },
 }));
@@ -40,7 +30,6 @@ import { dispatchComposerNode } from "@/lib/composer/dispatch";
 import type { ComposerNodeRun } from "@/lib/composer/schema";
 
 const mockSubmit = runtime.submitRun as jest.Mock;
-const migrationsDir = join(process.cwd(), "src", "lib", "db", "migrations");
 
 const SMALL = {
   key: "test-wf",
@@ -61,12 +50,10 @@ const SMALL = {
 };
 
 beforeEach(() => {
-  const Database = require("better-sqlite3/lib/index.js") as typeof import("better-sqlite3");
-  testDb = new (Database as unknown as new (path: string) => import("better-sqlite3").Database)(":memory:");
-  testDb.pragma("foreign_keys = ON");
-  execBaselineSchema(testDb);
-  applyComposerMigration(testDb, migrationsDir);
-  applyComposerGroupLinkMigration(testDb, migrationsDir);
+  testDb = openBaselineDb([
+    applyComposerMigration,
+    applyComposerGroupLinkMigration,
+  ]);
   mockSubmit.mockReset();
   mockSubmit.mockImplementation(async () => ({ runId: "b-" + Math.random().toString(36).slice(2), status: "started" }));
 });

@@ -1,7 +1,7 @@
 // ═══════════════════════════════════════════════════════════════
 // useHindsightMemories — memories tab state + recall/reflect/add + health.
-// Extracted verbatim from HindsightBrowser. Owns the shared `search` and
-// `health` state (health is only ever written by the memory fetch paths).
+// Owns the shared `search` and `health` state (health is only ever written
+// by the memory fetch paths).
 // ═══════════════════════════════════════════════════════════════
 
 "use client";
@@ -14,7 +14,7 @@ import {
   HINDSIGHT_DEFAULT_MAX_AGE_DAYS,
 } from "@/lib/memory/hindsight-client";
 import { parseOptionalTagsInput } from "@/lib/memory/hindsight-tag-input";
-import { runMutation } from "@/lib/run-mutation";
+import { runWrite } from "@/lib/api/api-write";
 import { stringOr } from "./utils";
 import type { Memory, HealthState } from "./types";
 
@@ -67,8 +67,6 @@ export function useHindsightMemories(showToast: ShowToast) {
 
   const loadRecentMemories = useCallback(async () => {
     setLoadingInitial(true);
-    // Envelope-typed: the route returns
-    // `{ data: { memories, mode, error } }`.
     const inner = await hindsightGet<{ memories?: Memory[]; total?: number; mode?: string; error?: string }>(
       "list",
       { limit: 50 },
@@ -103,8 +101,6 @@ export function useHindsightMemories(showToast: ShowToast) {
     }
     setLoading(true);
     try {
-      // Envelope-typed: the route returns
-      // `{ data: { memories, available, mode, message, error } }`.
       const inner = await hindsightGet<{
         memories?: Memory[];
         available?: boolean;
@@ -144,7 +140,6 @@ export function useHindsightMemories(showToast: ShowToast) {
     if (!search.trim()) return;
     setReflecting(true);
     setReflectResult(null);
-    // Single-nesting: type param is the inner `{response}` shape.
     const inner = await hindsightGet<{ response?: string }>("reflect", { query: search });
     setReflecting(false);
     if (!inner) {
@@ -157,17 +152,15 @@ export function useHindsightMemories(showToast: ShowToast) {
   const openAddModal = useCallback(() => setShowAddModal(true), [setShowAddModal]);
   const closeAddModal = useCallback(() => setShowAddModal(false), [setShowAddModal]);
 
-  const handleAdd = () =>
-    runMutation(showToast, {
-      isValid: () => newContent.trim().length > 0,
-      busy: setAdding,
-      build: () => ({
-        content: newContent,
-        tags: parseOptionalTagsInput(newTags),
-      }),
-      path: "/api/memory/hindsight",
-      successMsg: "Memory stored",
-      errorMsg: "Failed to store memory",
+  const handleAdd = async () => {
+    if (!newContent.trim()) return false;
+    const stored = await runWrite({
+      setBusy: setAdding,
+      showToast,
+      url: "/api/memory/hindsight",
+      body: { content: newContent, tags: parseOptionalTagsInput(newTags) },
+      successMessage: "Memory stored",
+      errorMessage: "Failed to store memory",
       onSuccess: async () => {
         setShowAddModal(false);
         setNewContent("");
@@ -176,6 +169,8 @@ export function useHindsightMemories(showToast: ShowToast) {
         else await loadRecentMemories();
       },
     });
+    return stored !== undefined;
+  };
 
   return {
     memories,

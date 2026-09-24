@@ -27,14 +27,19 @@ const mockUpdateResearchRun = jest.fn();
 jest.mock("@/lib/laboratory/deep-research/research-repository", () => ({
   updateResearchRun: (...a: unknown[]) => mockUpdateResearchRun(...a),
   insertResearchStep: jest.fn(),
+  // The job reads the row back before each step and before the terminal write,
+  // so a cancel the operator made mid-flight is not overwritten (T-0108, D98).
+  // These runs are never cancelled, so the answer is always `running`.
+  getResearchRun: jest.fn(() => ({ status: "running" })),
 }));
 
 jest.mock("@/lib/laboratory/deep-research/search", () => ({
   resolveSearchProvider: () => ({ name: "fake", search: async () => [] }),
 }));
-jest.mock("@/lib/artifacts-repository", () => ({ captureArtifactOnce: jest.fn() }));
-jest.mock("@/lib/db", () => ({ now: () => "2026-08-31T12:00:00.000Z" }));
-jest.mock("@/lib/api-logger", () => ({ logApiError: jest.fn() }));
+jest.mock("@/lib/runs/artifacts-repository", () => ({ captureArtifactOnce: jest.fn() }));
+// eslint-disable-next-line @typescript-eslint/no-require-imports -- jest.mock factories are hoisted above imports
+jest.mock("@/lib/db", () => require("../helpers/mocks").dbMock({ now: () => "2026-08-31T12:00:00.000Z" }));
+jest.mock("@/lib/api/api-logger", () => ({ logApiError: jest.fn() }));
 
 import { runResearchJob } from "@/lib/laboratory/deep-research/run-job";
 

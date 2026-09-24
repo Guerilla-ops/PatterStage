@@ -2,30 +2,17 @@
 // mission-field-updates.ts — shared prompt/field merge for update & promote
 // ═══════════════════════════════════════════════════════════════
 
+import { normaliseMissionName } from "@/lib/missions/mission-name";
 import { buildMissionPrompt, parseMissionPrompt } from "@/lib/missions/build-mission-prompt";
 import { normalizeLocalDirsInput } from "@/lib/fs/local-dir-entry";
 import type { LocalDirEntry } from "@/types/console";
-import type { Mission } from "@/lib/missions/mission-types";
-import type { MissionStatus } from "@/lib/missions/mission-types";
+import type { Mission, MissionDraftFields, MissionStatus } from "@/lib/missions/mission-types";
 
-export interface MissionFieldPatchInput {
+export interface MissionFieldPatchInput extends MissionDraftFields {
   name?: string;
   instruction?: string;
   context?: string;
   localDirs?: unknown;
-  references?: string[];
-  skills?: string[];
-  suggestedToolsets?: string[];
-  goals?: string[];
-  modelId?: string;
-  provider?: string;
-  profileName?: string;
-  missionTimeMinutes?: number;
-  timeoutMinutes?: number;
-  schedule?: string;
-  categoryId?: string | null;
-  outputFormat?: string;
-  constraints?: string;
   status?: string;
   result?: string;
   queuedForRun?: boolean;
@@ -116,7 +103,7 @@ export function buildMissionFieldPatch(
   if (input.status) updates.status = input.status as MissionStatus;
   if (input.result !== undefined) updates.result = input.result;
   if (prompt !== undefined) updates.prompt = prompt;
-  if (input.name !== undefined) updates.name = input.name.trim() || existing.name;
+  if (input.name !== undefined) updates.name = normaliseMissionName(input.name) ?? existing.name;
   if (input.outputFormat !== undefined) {
     updates.outputFormat = input.outputFormat.trim() || null;
   }
